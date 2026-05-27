@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::ErrorKind;
 use std::path::Path;
 
 use chardet::{charset2encoding, detect};
@@ -6,8 +7,6 @@ use chardetng::EncodingDetector;
 use charset_normalizer_rs::from_bytes;
 use encoding_rs::{Encoding, UTF_8};
 use log::info;
-
-use crate::constants::*;
 
 /// Decodes a buffer of bytes into a string, detecting the encoding
 pub fn decode_buffer(buf: Vec<u8>) -> (String, String) {
@@ -81,6 +80,34 @@ pub fn decode_buffer(buf: Vec<u8>) -> (String, String) {
     (buff_output, actual_encoding.name().to_string())
 }
 
+/// True if a process looks like the GTA SA game (native or under Wine).
+pub fn is_game_process(p: &sysinfo::Process) -> bool {
+    let name = p.name().to_lowercase();
+    if name.contains("gta-sa.exe") || name.contains("gta_sa.exe") {
+        return true;
+    }
+    p.cmd().iter().any(|a| {
+        let a = a.to_lowercase();
+        a.contains("gta-sa.exe") || a.contains("gta_sa.exe")
+    })
+}
+
+/// Kill every running GTA SA instance. Enforces a single game at a time and
+/// clears a crashed/zombie instance that would otherwise make the next
+/// connection crash on the loading screen. Returns how many were killed.
+pub fn kill_game_processes() -> u32 {
+    use sysinfo::System;
+    let mut sys = System::new();
+    sys.refresh_processes();
+    let mut killed = 0;
+    for p in sys.processes().values() {
+        if is_game_process(p) && p.kill() {
+            killed += 1;
+        }
+    }
+    killed
+}
+
 pub fn copy_files(src: impl AsRef<Path>, dest: impl AsRef<Path>) -> crate::errors::Result<()> {
     let files = fs::read_dir(src).map_err(|e| crate::errors::LauncherError::from(e))?;
 
@@ -92,12 +119,15 @@ pub fn copy_files(src: impl AsRef<Path>, dest: impl AsRef<Path>) -> crate::error
         if ty.is_dir() {
             let dir_path = dest.as_ref().join(entry.file_name());
 
+            // Match on ErrorKind, not raw OS codes: "already exists" is 183 on
+            // Windows but EEXIST (17) on macOS/Linux, so a code-only check made
+            // every reinstall fail with "IO error: File exists (os error 17)".
             if let Err(e) = fs::create_dir(&dir_path) {
-                match e.raw_os_error() {
-                    Some(ERROR_DIRECTORY_EXISTS) => {
+                match e.kind() {
+                    ErrorKind::AlreadyExists => {
                         info!("Directory {} already exists", dir_path.display());
                     }
-                    Some(ERROR_ACCESS_DENIED) => {
+                    ErrorKind::PermissionDenied => {
                         return Err(crate::errors::LauncherError::AccessDenied(format!(
                             "Unable to create the directory \"{}\"",
                             dir_path.display()
@@ -111,22 +141,26 @@ pub fn copy_files(src: impl AsRef<Path>, dest: impl AsRef<Path>) -> crate::error
         } else {
             let dest_path = dest.as_ref().join(entry.file_name());
             if let Err(e) = fs::copy(entry.path(), dest_path.clone()) {
-                match e.raw_os_error() {
-                    Some(ERROR_ACCESS_DENIED) => {
-                        return Err(crate::errors::LauncherError::AccessDenied(format!(
-                            "Unable to copy file from \"{}\" to \"{}\"",
-                            entry.path().display(),
-                            dest_path.display()
-                        )))
-                    }
-                    Some(ERROR_FILE_BEING_USED) => {
-                        if let Some(ext) = entry.path().extension() {
-                            if ext == "ttf" {
-                                info!("Unable to copy \"{}\"", entry.path().display());
-                            }
+                // File in use: ETXTBSY (ResourceBusy) on macOS/Linux, sharing
+                // violation (code 32) on Windows. Fonts stay locked while a
+                // prior game instance is still closing; they are non-essential,
+                // so skip them rather than fail the whole copy.
+                let file_in_use =
+                    e.kind() == ErrorKind::ResourceBusy || e.raw_os_error() == Some(32);
+                if e.kind() == ErrorKind::PermissionDenied {
+                    return Err(crate::errors::LauncherError::AccessDenied(format!(
+                        "Unable to copy file from \"{}\" to \"{}\"",
+                        entry.path().display(),
+                        dest_path.display()
+                    )));
+                } else if file_in_use {
+                    if let Some(ext) = entry.path().extension() {
+                        if ext == "ttf" {
+                            info!("Unable to copy \"{}\"", entry.path().display());
                         }
                     }
-                    _ => return Err(crate::errors::LauncherError::from(e)),
+                } else {
+                    return Err(crate::errors::LauncherError::from(e));
                 }
             }
         }

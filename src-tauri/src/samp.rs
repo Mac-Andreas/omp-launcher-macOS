@@ -2,6 +2,7 @@
 use crate::{constants::*, helpers};
 #[cfg(target_os = "windows")]
 use byteorder::{LittleEndian, ReadBytesExt};
+#[cfg(target_os = "windows")]
 use serde::{Deserialize, Serialize};
 #[cfg(target_os = "windows")]
 use std::fs::File;
@@ -16,6 +17,8 @@ use winreg::enums::*;
 #[cfg(target_os = "windows")]
 use winreg::RegKey;
 
+// Only constructed by the Windows SA-MP registry/favourites reader.
+#[cfg(target_os = "windows")]
 #[derive(Serialize, Deserialize)]
 pub struct SAMPServerInfo {
     pub ip: String,
@@ -25,6 +28,7 @@ pub struct SAMPServerInfo {
     pub rcon: String,
 }
 
+#[cfg(target_os = "windows")]
 #[derive(Serialize, Deserialize)]
 pub struct SAMPUserData {
     pub file_id: String,
@@ -33,9 +37,59 @@ pub struct SAMPUserData {
     pub favorite_servers: Vec<SAMPServerInfo>,
 }
 
+// macOS/Linux: there is no SA-MP registry key. The game lives inside a
+// CrossOver/Wine bottle, so probe every bottle for a known GTA SA layout
+// and return the first directory that actually contains a game executable.
 #[cfg(not(target_os = "windows"))]
 pub fn get_gtasa_path() -> String {
-    "".to_string()
+    get_gtasa_path_for_bottle("")
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn get_gtasa_path_for_bottle(bottle_name: &str) -> String {
+    use crate::constants::{BOTTLE_GAME_SUBPATHS, GTA_SA_EXECUTABLE_ALT};
+    use std::path::{Path, PathBuf};
+
+    let home = match std::env::var("HOME") {
+        Ok(h) => h,
+        Err(_) => return String::new(),
+    };
+
+    let exe_names = [GTA_SA_EXECUTABLE_ALT];
+    let has_game = |dir: &Path| exe_names.iter().any(|e| dir.join(e).is_file());
+
+    let bottles_root =
+        PathBuf::from(&home).join("Library/Application Support/CrossOver/Bottles");
+
+    if !bottle_name.is_empty() {
+        let bottle = bottles_root.join(bottle_name);
+        if bottle.is_dir() {
+            for sub in BOTTLE_GAME_SUBPATHS {
+                let dir = bottle.join(sub);
+                if has_game(&dir) {
+                    return dir.to_string_lossy().replace('\\', "/");
+                }
+            }
+        }
+        return String::new();
+    }
+
+    if let Ok(entries) = std::fs::read_dir(&bottles_root) {
+        for entry in entries.flatten() {
+            let bottle = entry.path();
+            if !bottle.is_dir() {
+                continue;
+            }
+            for sub in BOTTLE_GAME_SUBPATHS {
+                let dir = bottle.join(sub);
+                if has_game(&dir) {
+                    return dir.to_string_lossy().replace('\\', "/");
+                }
+            }
+        }
+    }
+
+    String::new()
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -60,6 +114,11 @@ pub fn get_gtasa_path() -> String {
         },
         Err(_) => String::new(),
     }
+}
+
+#[cfg(target_os = "windows")]
+pub fn get_gtasa_path_for_bottle(_bottle_name: &str) -> String {
+    get_gtasa_path()
 }
 
 #[cfg(target_os = "windows")]

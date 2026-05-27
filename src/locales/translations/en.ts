@@ -58,6 +58,59 @@ export default {
   settings_new_update_available: "⚠ New Update Available. Click to Download! ⚠",
   settings_credits_made_by: "Made with ❤️ by",
   settings_credits_view_source_on_github: "View source code on GitHub",
+  settings_credits_macos_port: "macOS port by",
+  settings_health_tab_title: "CrossOver",
+  settings_health_recheck: "Re-check",
+  settings_health_linked: "Linked",
+  settings_health_not_linked: "Not linked",
+  settings_health_crossover_app: "CrossOver app",
+  settings_health_crossover_bottle: "CrossOver bottle",
+  settings_health_game_file: "Game file executable",
+  settings_health_no_bottle: "No bottle found",
+  settings_health_help_crossover_ok: "CrossOver is installed and ready.",
+  settings_health_help_crossover_bad:
+    "CrossOver is not installed. Download and install it from codeweavers.com, then re-check.",
+  settings_health_help_bottle_ok:
+    "A CrossOver bottle was found. Override it below if needed.",
+  settings_health_help_bottle_bad:
+    "No CrossOver bottle found. Create a bottle in CrossOver (install the Rockstar Games Launcher / GTA SA into it), or pick the correct bottle below.",
+  settings_health_help_game_ok: "The GTA: San Andreas executable was found.",
+  settings_health_help_game_bad:
+    "gta-sa.exe was not found. Install GTA: San Andreas (v1.0) inside the CrossOver bottle.",
+  settings_bottle_name_label: "CrossOver bottle",
+  settings_bottle_auto_detect: "(Auto-detect)",
+  settings_general_bottle_hint:
+    "The game runs through a CrossOver bottle. Pick your bottle in the CrossOver tab; the launcher detects the game from it automatically.",
+  settings_reinstall_samp_files: "Install SA-MP files",
+  settings_installing_samp_files: "Installing…",
+  settings_samp_installed_done: "Installed",
+  settings_uninstall_samp_files: "Uninstall SA-MP files",
+  settings_uninstalling_samp_files: "Uninstalling…",
+  settings_samp_uninstalled_done: "Uninstalled",
+  settings_crossover_bottle_section: "CrossOver bottle",
+  settings_open_bottle_in_finder: "Open in Finder",
+  samp_uninstall_title: "Uninstalling SA-MP files",
+  samp_uninstall_description: "Restoring the game folder to default GTA: San Andreas.",
+  samp_uninstall_success_title: "SA-MP files removed",
+  samp_uninstall_success_description: "Game folder restored to plain GTA: San Andreas.",
+  samp_uninstall_failed_title: "SA-MP uninstall failed",
+  samp_not_installed_title: "SA-MP files not installed",
+  samp_not_installed_description:
+    "The SA-MP / open.mp files are not installed in your CrossOver bottle yet. Install them now to join this server?",
+  samp_install_need_crossover:
+    "CrossOver is not installed. Install CrossOver first, then try again (see Settings → CrossOver).",
+  samp_install_need_bottle:
+    "No CrossOver bottle with GTA: San Andreas was found. Set up the bottle first (see Settings → CrossOver).",
+  samp_setup_first_run_title: "Install SA-MP files?",
+  samp_setup_first_run_description:
+    "GTA: San Andreas was found in your selected CrossOver bottle. Install the SA-MP files and open.mp loader into it before joining servers.",
+  samp_setup_install: "Install",
+  samp_setup_skip: "Not Now",
+  samp_setup_installing_title: "Installing SA-MP files",
+  samp_setup_installing_description: "Preparing the selected CrossOver bottle.",
+  samp_setup_success_title: "SA-MP files installed",
+  samp_setup_success_description: "The selected bottle is ready for open.mp.",
+  samp_setup_failed_title: "SA-MP install failed",
   update_modal_update_available_title: "Update Available!",
   update_modal_update_available_description:
     'New launcher build is available!\nYour launcher build version: {{ version }}\nCurrent launcher build version: {{ newVersion }}\nClick "Download" to open release page',
@@ -78,6 +131,11 @@ export default {
   nickname_modal_name_not_set_title: "No Nickname!",
   nickname_modal_name_not_set_description:
     "You must choose a nickname for yourself before joining a server.",
+  launching_game: "Launching game...",
+  launching_game_hint: "GTA: San Andreas is starting, please wait.",
+  game_failed_to_start_title: "Game didn't start",
+  game_failed_to_start_description:
+    "GTA: San Andreas was launched but no game process appeared. The bottle, gta-sa.exe, or DLLs may be misconfigured.",
   gta_path_modal_path_not_set_title: "GTA: San Andreas path is not set!",
   gta_path_modal_path_not_set_description:
     "You didn't set GTA: San Andreas path, go to settings and search for game folder.",

@@ -2,7 +2,11 @@ import { invoke, shell } from "@tauri-apps/api";
 import { getVersion } from "@tauri-apps/api/app";
 import { type } from "@tauri-apps/api/os";
 import { t } from "i18next";
-import { getUpdateInfo } from "../api/apis";
+import {
+  getForkReleaseInfo,
+  getUpdateInfo,
+  getUpstreamLauncherVersion,
+} from "../api/apis";
 import { useAppState } from "../states/app";
 import { useMessageBox } from "../states/messageModal";
 import { usePersistentServers } from "../states/servers";
@@ -109,26 +113,69 @@ export const fetchServers = async (cached: boolean = true): Promise<void> => {
   }
 };
 
-export const fetchUpdateInfo = async () => {
-  const { version } = useAppState.getState();
+// Compare two ARM-fork semver strings shaped "MAJOR.MINOR.PATCH[-arm.N]".
+// Returns true when `remote` is strictly newer than `local`. Anything that
+// doesn't match the expected shape compares as not-newer so we never prompt on
+// an upstream tag the launcher can't parse.
+const parseArmVersion = (v: string): number[] | null => {
+  // Accepts plain "1.6.3", stable arm "1.6.3-arm.N", and pre-release
+  // "1.6.3-arm-beta.N". Channel orders releases so beta < arm < plain, i.e. a
+  // beta tag never out-ranks the matching stable arm tag.
+  const m = v.match(/^v?(\d+)\.(\d+)\.(\d+)(?:-arm(-beta)?\.(\d+))?$/);
+  if (!m) return null;
+  const channel = m[5] === undefined ? 2 : m[4] ? 0 : 1;
+  return [+m[1], +m[2], +m[3], channel, m[5] ? +m[5] : 0];
+};
 
+const isNewer = (remote: string, local: string): boolean => {
+  const r = parseArmVersion(remote);
+  const l = parseArmVersion(local);
+  if (!r || !l) return false;
+  for (let i = 0; i < r.length; i++) {
+    if (r[i] > l[i]) return true;
+    if (r[i] < l[i]) return false;
+  }
+  return false;
+};
+
+export const fetchUpdateInfo = async () => {
   const nativeVer = await getVersion();
   const hostOS = await type();
+
+  // Latest upstream (Windows) launcher release tag from openmultiplayer/launcher
+  // GitHub releases, shown in the About panel as "Upstream version". Best-effort:
+  // a failed fetch leaves the prior value (defaults to "—").
+  const upstream = await getUpstreamLauncherVersion();
+  if (upstream.data) {
+    useAppState.getState().setUpstreamLauncherVersionValue(upstream.data);
+  }
+
+  // api.open.mp/launcher is still the source of truth for the omp-client.dll
+  // checksum + download URL used during boot. The launcher self-update prompt
+  // is driven separately by this repo's GitHub releases (see below), so an
+  // upstream version bump cannot ship an ARM build to macOS users.
   const response = await getUpdateInfo();
   if (response.data) {
     const versionInfo = response.data.versions[useAppState.getState().version];
 
     if (versionInfo) {
-      response.data.download = versionInfo.download;
       response.data.ompPluginChecksum = versionInfo.ompPluginChecksum;
       response.data.ompPluginDownload = versionInfo.ompPluginDownload;
     } else {
       const info = response.data.versions[response.data.version];
       if (info) {
-        response.data.download = info.download;
         response.data.ompPluginChecksum = info.ompPluginChecksum;
         response.data.ompPluginDownload = info.ompPluginDownload;
       }
+    }
+
+    // Overwrite version/download/changelog with the fork release so the update
+    // modal only fires for our ARM tags.
+    const fork = await getForkReleaseInfo();
+    if (fork.data) {
+      response.data.version = fork.data.version;
+      response.data.download = fork.data.download;
+      response.data.changelog = fork.data.changelog;
     }
 
     useAppState.getState().setUpdateInfo(response.data);
@@ -143,13 +190,13 @@ export const fetchUpdateInfo = async () => {
 
     if (updateInfo) {
       if (
-        updateInfo.version != version &&
+        isNewer(updateInfo.version, nativeVer) &&
         skippedUpdateVersion != updateInfo.version
       ) {
         showMessageBox({
           title: t("update_modal_update_available_title"),
           description: t("update_modal_update_available_description", {
-            version,
+            version: nativeVer,
             newVersion: updateInfo.version,
           }),
           boxWidth: 640,

@@ -22,9 +22,14 @@ interface AppState {
   updateInfo: UpdateInfo | undefined;
   skippedUpdateVersion: string;
   nativeAppVersion: string;
+  // Raw api.open.mp/launcher "version" (the upstream build number, e.g. "6"),
+  // captured before fetchUpdateInfo overwrites updateInfo.version with the
+  // macOS fork's GitHub release tag.
+  upstreamLauncherVersion: string;
   hostOS: OsType;
   setUpdateInfo: (data: UpdateInfo) => void;
   setNativeAppVersionValue: (data: string) => void;
+  setUpstreamLauncherVersionValue: (data: string) => void;
   setHostOSValue: (data: OsType) => void;
   skipUpdate: (version: string) => void;
 }
@@ -34,11 +39,14 @@ const useAppState = create<AppState>()((set) => ({
   updateInfo: undefined,
   skippedUpdateVersion: "",
   nativeAppVersion: "",
+  upstreamLauncherVersion: "",
   hostOS: "" as OsType,
   listType: "favorites",
   setUpdateInfo: (data: UpdateInfo) => set(() => ({ updateInfo: data })),
   setNativeAppVersionValue: (data: string) =>
     set(() => ({ nativeAppVersion: data })),
+  setUpstreamLauncherVersionValue: (data: string) =>
+    set(() => ({ upstreamLauncherVersion: data })),
   setHostOSValue: (data: OsType) => set(() => ({ hostOS: data })),
   skipUpdate: (version) => set(() => ({ skippedUpdateVersion: version })),
 }));

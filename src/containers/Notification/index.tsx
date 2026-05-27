@@ -161,8 +161,10 @@ Notification.displayName = "Notification";
 const styles = StyleSheet.create({
   container: {
     position: "absolute",
-    bottom: 10,
-    right: 6,
+    // Inset from the window edge so the square card clears the window's
+    // rounded corner instead of being visually clipped by it.
+    bottom: 16,
+    right: 16,
     width: 300,
     shadowColor: "#000",
     shadowOffset: {

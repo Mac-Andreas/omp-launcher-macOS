@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api";
+import { t } from "i18next";
 import {
   appWindow,
   LogicalPosition,
@@ -16,13 +17,21 @@ import {
 } from "react";
 import { StyleSheet, View } from "react-native";
 import { DEBUG_MODE, IN_GAME, IN_GAME_PROCESS_ID } from "./constants/app";
+import LaunchOverlay from "./containers/LaunchOverlay";
 import LoadingScreen from "./containers/LoadingScreen";
 import WindowTitleBar from "./containers/WindowTitleBar";
 import { changeLanguage } from "./locales";
 import { useGenericPersistentState } from "./states/genericStates";
+import { useMessageBox } from "./states/messageModal";
+import { useNotification } from "./states/notification";
 import { usePersistentServers } from "./states/servers";
+import { useSettings } from "./states/settings";
 import { useTheme } from "./states/theme";
 import { throttle } from "./utils/debounce";
+import {
+  getSelectedBottleGamePath,
+  prepareSelectedBottleSampFiles,
+} from "./utils/game";
 import {
   checkIfProcessAlive,
   fetchServers,
@@ -50,7 +59,6 @@ const SettingsModal = lazy(() => import("./containers/Settings"));
 
 const App = memo(() => {
   const [loading, setLoading] = useState(!IN_GAME);
-  const [maximized, setMaximized] = useState(false);
   const { theme } = useTheme();
   const { language } = useGenericPersistentState();
   const windowSize = useRef<PhysicalSize>();
@@ -67,9 +75,12 @@ const App = memo(() => {
           payload.height !== windowSize.current?.height;
 
         if (hasChanged) {
-          const isMaximized = await appWindow.isMaximized();
-          setMaximized(isMaximized);
           windowSize.current = payload;
+          // AppKit snaps the traffic lights back to their default position on
+          // every titlebar relayout — re-apply our vertical nudge.
+          if (!IN_GAME) {
+            invoke("realign_traffic_lights").catch(() => {});
+          }
         }
       } finally {
         endTimer();
@@ -89,14 +100,23 @@ const App = memo(() => {
 
       mainWindowSize.current = innerSize.toLogical(scaleFactor);
 
-      // Set window attributes for loading screen
+      // Set window attributes for loading screen. Decorations stay ON the
+      // whole time — toggling them at runtime drops the native Overlay
+      // titlebar style and leaves a doubled-up standard titlebar.
+      // Rust hides the traffic lights in setup() for first launch, but a
+      // webview reload (e.g. Danger Zone → Reset) re-runs JS without
+      // re-running setup, so re-hide them here too.
       await Promise.all([
         appWindow.setSize(new LogicalSize(250, 300)),
         appWindow.setResizable(false),
         appWindow.center(),
+        invoke("set_traffic_lights", { visible: false }),
       ]);
 
-      // Reset favorite server list outdated cached data
+      // Reset favorite server list outdated cached data (matches upstream
+      // fork — favorites get re-queried via fetchServers' batched calls
+      // below, this just clears stale info so we don't display obsolete
+      // values while the live query lands).
       const { favorites, updateInFavoritesList } =
         usePersistentServers.getState();
       if (Array.isArray(favorites) && favorites.length > 0) {
@@ -130,15 +150,99 @@ const App = memo(() => {
     if (!loading) {
       const targetSize = mainWindowSize.current || new LogicalSize(1000, 700);
 
-      Promise.all([
-        appWindow.setResizable(true),
-        appWindow.setSize(targetSize),
-      ]);
-
-      if (!IN_GAME) {
-        appWindow.center();
-      }
+      // macOS Tauri 1.x: center() before the resize has settled lands the
+      // window in the previous (loading-screen) frame, leaving the real frame
+      // hanging off the top edge. Sequence: set resizable -> resize -> center
+      // -> nudge again on the next paint to catch the post-resize position.
+      (async () => {
+        await appWindow.setResizable(true);
+        await appWindow.setSize(targetSize);
+        if (!IN_GAME) {
+          // Splash is over — reveal the native macOS traffic lights that
+          // were hidden in the Rust setup step.
+          await invoke("set_traffic_lights", { visible: true });
+          await appWindow.center();
+          requestAnimationFrame(() => {
+            appWindow.center();
+          });
+        }
+      })();
     }
+  }, [loading]);
+
+  useEffect(() => {
+    if (loading || IN_GAME) return;
+
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      const {
+        sampSetupPromptShown,
+        setSampSetupPromptShown,
+        bottleName,
+        gtasaPath,
+      } = useSettings.getState();
+
+      // First-run prompt only. If the user already picked a CrossOver
+      // bottle or linked the game folder, they configured the setup
+      // themselves — don't nag. Settings > "Reinstall SA-MP files in
+      // bottle" stays available for them to run it on demand.
+      if (
+        sampSetupPromptShown ||
+        bottleName ||
+        gtasaPath ||
+        useMessageBox.getState().visible
+      ) {
+        return;
+      }
+
+      const gamePath = await getSelectedBottleGamePath();
+      if (cancelled || !gamePath) {
+        return;
+      }
+
+      const { showMessageBox } = useMessageBox.getState();
+      const { showNotification } = useNotification.getState();
+
+      showMessageBox({
+        title: t("samp_setup_first_run_title"),
+        description: t("samp_setup_first_run_description"),
+        boxWidth: 440,
+        buttonWidth: 150,
+        buttons: [
+          {
+            title: t("samp_setup_skip"),
+            onPress: () => setSampSetupPromptShown(true),
+          },
+          {
+            title: t("samp_setup_install"),
+            onPress: () => {
+              showNotification(
+                t("samp_setup_installing_title"),
+                t("samp_setup_installing_description")
+              );
+              prepareSelectedBottleSampFiles(gamePath)
+                .then(() =>
+                  showNotification(
+                    t("samp_setup_success_title"),
+                    t("samp_setup_success_description")
+                  )
+                )
+                .catch((error) =>
+                  showNotification(
+                    t("samp_setup_failed_title"),
+                    String(error)
+                  )
+                );
+            },
+          },
+        ],
+      });
+    }, 500);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
   }, [loading]);
 
   useEffect(() => {
@@ -206,20 +310,20 @@ const App = memo(() => {
     endTimer();
   }, []);
 
-  const appStyle = useMemo(
-    () => [styles.app, { padding: maximized || IN_GAME ? 0 : 4 }],
-    [maximized]
-  );
+  const appStyle = useMemo(() => styles.app, []);
 
   const appViewStyle = useMemo(
     () => [
       styles.appView,
       {
-        borderRadius: maximized || IN_GAME ? 0 : 10,
         backgroundColor: theme.secondary,
+        // The native macOS window (decorations + titleBarStyle: Overlay) draws
+        // and clips the rounded corners now, so content stays square — a
+        // self-drawn radius would leave a transparent sliver at each corner.
+        borderRadius: 0,
       },
     ],
-    [maximized, theme.secondary]
+    [theme.secondary]
   );
 
   if (loading) {
@@ -240,6 +344,7 @@ const App = memo(() => {
           <ExternalServerHandler />
           <Notification />
           <MessageBox />
+          <LaunchOverlay />
         </View>
       </View>
     </View>
@@ -259,19 +364,13 @@ const styles = StyleSheet.create({
     height: "100%",
     width: "100%",
     overflow: "hidden",
-    shadowColor: "#000",
-    shadowOffset: {
-      width: 0,
-      height: 0,
-    },
-    shadowOpacity: 0.6,
-    shadowRadius: 4.65,
   },
   appBody: {
     flex: 1,
     width: "100%",
     paddingHorizontal: sc(15),
     paddingBottom: sc(15),
+    paddingTop: sc(12),
   },
 });
 

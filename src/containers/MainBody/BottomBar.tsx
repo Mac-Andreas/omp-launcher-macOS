@@ -153,6 +153,12 @@ const BottomBar = () => {
               <Text semibold color="#FFFFFF" style={styles.actionButtonText}>
                 {t("join_discord")}
               </Text>
+              <Icon
+                svg
+                image={images.icons.external}
+                size={sc(11)}
+                color="#FFFFFF"
+              />
             </TouchableOpacity>
           ) : (
             <PropInfo

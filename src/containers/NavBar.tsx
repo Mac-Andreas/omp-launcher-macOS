@@ -1,10 +1,12 @@
-import { memo, useCallback, useMemo } from "react";
+import { memo, useCallback, useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next"; // ✅ use this instead
 import { StyleSheet, TextInput, View } from "react-native";
 import Icon from "../components/Icon";
 import TabBar from "../components/TabBar";
+import Text from "../components/Text";
 import { images } from "../constants/images";
 import { useGenericTempState } from "../states/genericStates";
+import { useNicknameAlert } from "../states/nicknameAlert";
 import { useSettings } from "../states/settings";
 import { useTheme } from "../states/theme";
 import { sc } from "../utils/sizeScaler";
@@ -15,6 +17,20 @@ const NavBar = memo(() => {
   const { theme } = useTheme();
   const { nickName, setNickName } = useSettings();
   const { setListType, listType } = useGenericTempState();
+  const nicknameRequired = useNicknameAlert((s) => s.required);
+  const clearNicknameAlert = useNicknameAlert((s) => s.clear);
+
+  // Drop the alert as soon as the user puts something into the field. Also
+  // self-clear after a few seconds so it doesn't linger forever if they walk
+  // away without typing.
+  useEffect(() => {
+    if (nicknameRequired && nickName.trim().length > 0) clearNicknameAlert();
+  }, [nicknameRequired, nickName, clearNicknameAlert]);
+  useEffect(() => {
+    if (!nicknameRequired) return;
+    const id = setTimeout(clearNicknameAlert, 6000);
+    return () => clearTimeout(id);
+  }, [nicknameRequired, clearNicknameAlert]);
 
   const tabList = useMemo(
     () => [
@@ -44,25 +60,44 @@ const NavBar = memo(() => {
 
   const dynamicStyles = useMemo(
     () => ({
-      nicknameIcon: [
-        styles.nicknameIconContainer,
-        { backgroundColor: theme.itemBackgroundColor },
-      ],
+      nicknameBox: {
+        height: sc(35),
+        flexDirection: "row" as const,
+        alignItems: "center" as const,
+        paddingLeft: sc(10),
+        paddingRight: sc(8),
+        gap: sc(8),
+        borderRadius: sc(6),
+        borderWidth: 1,
+        borderColor: nicknameRequired ? "#E08A33" : `${theme.textPrimary}26`,
+        backgroundColor: nicknameRequired
+          ? "#E08A331A"
+          : theme.itemBackgroundColor,
+      },
+      alertChip: {
+        flexDirection: "row" as const,
+        alignItems: "center" as const,
+        gap: sc(6),
+        height: sc(35),
+        paddingHorizontal: sc(10),
+        marginRight: sc(8),
+        borderRadius: sc(6),
+        borderWidth: 1,
+        borderColor: "#E08A3399",
+        backgroundColor: "#E08A331F",
+      },
       nicknameInput: {
         fontFamily: "Proxima Nova Regular",
-        backgroundColor: theme.textInputBackgroundColor,
+        backgroundColor: "transparent",
         color: theme.textPrimary,
         fontSize: sc(17),
         width: sc(160),
-        marginLeft: sc(10),
-        height: sc(35),
-        paddingHorizontal: sc(5),
-        borderRadius: sc(5),
+        height: "100%" as const,
         // @ts-ignore
         outlineStyle: "none",
       },
     }),
-    [theme]
+    [theme, nicknameRequired]
   );
 
   const handleTabChange = useCallback(
@@ -79,20 +114,34 @@ const NavBar = memo(() => {
     <View style={styles.container}>
       <TabBar onChange={handleTabChange} list={tabList} selected={listType} />
       <View style={styles.inputs}>
-        <View style={styles.nicknameContainer}>
-          <View style={dynamicStyles.nicknameIcon}>
+        {nicknameRequired && (
+          <View style={dynamicStyles.alertChip}>
             <Icon
-              title={t("nickname")}
-              image={images.icons.nickname}
-              size={sc(16)}
-              color={theme.textSecondary}
+              svg
+              image={images.icons.warning}
+              size={sc(13)}
+              color="#E08A33"
             />
+            <Text size={1} semibold color="#E08A33">
+              {t("nickname_required_chip", {
+                defaultValue: "Nickname required",
+              })}
+            </Text>
           </View>
+        )}
+        <View style={dynamicStyles.nicknameBox}>
+          <Icon
+            title={t("nickname")}
+            image={images.icons.nickname}
+            size={sc(16)}
+            color={theme.textSecondary}
+          />
           <TextInput
             value={nickName}
             onChangeText={handleNicknameChange}
             placeholder={`${t("nickname")}...`}
             placeholderTextColor={theme.textSecondary}
+            // @ts-ignore — RN-Web TextInput supports outlineStyle
             style={dynamicStyles.nicknameInput}
           />
         </View>

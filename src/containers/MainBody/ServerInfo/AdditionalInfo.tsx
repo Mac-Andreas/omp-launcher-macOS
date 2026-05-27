@@ -29,7 +29,59 @@ const AdditionalInfo = (props: IProps) => {
     }
   }, [props.server?.rules]);
 
+  const valueBoxStyle = {
+    height: sc(26),
+    paddingHorizontal: sc(7),
+    backgroundColor:
+      themeType === "dark" ? theme.secondary + "66" : "#E2E6EE",
+    borderRadius: sc(5),
+  };
+
   const renderRule = ({ item: rule, index }: ListRenderItemInfo<Rule>) => {
+    // allowed_clients can be a list ("0.3.7, 0.3.7DL"). Render one box per
+    // client, each using the same box + text style as every other value.
+    if (rule.name === "allowed_clients") {
+      const tokens = rule.value
+        .split(/[,/]+/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const boxes = tokens.length ? tokens : [rule.value];
+      return (
+        <View
+          style={[
+            styles.rulesContainer,
+            styles.acRuleContainer,
+            { marginBottom: sc(5) },
+          ]}
+          key={"rule-list-item-" + index}
+        >
+          <View style={[styles.ruleFieldContainer, styles.acRuleLabel]}>
+            <Text style={{ fontSize: sc(16) }} color={theme.textPrimary}>
+              {rule.name}
+            </Text>
+          </View>
+          <View style={[styles.valueFieldContainer, styles.acValueContainer]}>
+            {boxes.map((token, i) => (
+              <View
+                key={"ac-" + i}
+                style={[
+                  styles.commonFieldContainer,
+                  valueBoxStyle,
+                  styles.acBox,
+                ]}
+              >
+                <Text
+                  style={{ fontSize: sc(14) }}
+                  color={theme.textSecondary}
+                >
+                  {token}
+                </Text>
+              </View>
+            ))}
+          </View>
+        </View>
+      );
+    }
     return (
       <View
         style={[styles.rulesContainer, { marginBottom: sc(5) }]}
@@ -44,13 +96,7 @@ const AdditionalInfo = (props: IProps) => {
           style={[
             styles.commonFieldContainer,
             styles.valueFieldContainer,
-            {
-              height: sc(26),
-              paddingHorizontal: sc(7),
-              backgroundColor:
-                themeType === "dark" ? theme.secondary + "66" : "#E2E6EE",
-              borderRadius: sc(5),
-            },
+            valueBoxStyle,
           ]}
         >
           <Text style={{ fontSize: sc(14) }} color={theme.textSecondary}>
@@ -133,6 +179,27 @@ const styles = StyleSheet.create({
   valueFieldContainer: {
     paddingRight: 5,
     alignItems: "flex-end",
+  },
+  acRuleContainer: {
+    height: "auto",
+    minHeight: sc(26),
+    alignItems: "center",
+  },
+  acRuleLabel: {
+    justifyContent: "center",
+  },
+  acValueContainer: {
+    flex: 1,
+    height: "auto",
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "flex-end",
+    alignItems: "center",
+    gap: sc(6),
+    paddingVertical: sc(3),
+  },
+  acBox: {
+    alignItems: "center",
   },
 });
 

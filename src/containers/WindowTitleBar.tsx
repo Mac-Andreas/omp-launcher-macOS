@@ -1,14 +1,14 @@
 import { invoke } from "@tauri-apps/api";
-import { appWindow } from "@tauri-apps/api/window";
-import { useTranslation } from "react-i18next";
-import { memo, useCallback, useMemo } from "react";
 import {
-  ColorValue,
-  Pressable,
-  StyleSheet,
-  TouchableOpacity,
-  View,
-} from "react-native";
+  appWindow,
+  currentMonitor,
+  LogicalSize,
+  PhysicalPosition,
+  PhysicalSize,
+} from "@tauri-apps/api/window";
+import { useTranslation } from "react-i18next";
+import { memo, useCallback, useMemo, useRef } from "react";
+import { ColorValue, Pressable, StyleSheet, TouchableOpacity, View } from "react-native";
 import Icon from "../components/Icon";
 import Text from "../components/Text";
 import { IN_GAME, IN_GAME_PROCESS_ID } from "../constants/app";
@@ -17,49 +17,41 @@ import { useSettingsModal } from "../states/settingsModal";
 import { useTheme } from "../states/theme";
 import { sc } from "../utils/sizeScaler";
 
-interface NativeButtonProps {
-  size?: number;
-  iconSize?: number;
-  image: string;
-  title?: string;
-  onPress: () => void;
+// Fallback traffic lights for the borderless in-game overlay window only.
+// The main launcher window uses real macOS controls (titleBarStyle: Overlay).
+const TRAFFIC_LIGHTS = [
+  { key: "close", color: "#FF5F57" },
+  { key: "minimize", color: "#FEBC2E" },
+  { key: "maximize", color: "#28C840" },
+] as const;
+
+interface TrafficLightsProps {
+  onClose: () => void;
+  onMinimize: () => void;
+  onMaximize: () => void;
 }
 
-const NativeWindowTitleBarButtons = memo<NativeButtonProps>(
-  ({ size = sc(30), image, onPress, iconSize = 15, title = "" }) => {
-    const { theme } = useTheme();
-
-    const buttonStyle = useMemo(
-      () => ({
-        height: size,
-        width: size,
-        borderRadius: sc(3),
-      }),
-      [size]
-    );
-
-    const pressableStyle = useMemo(
-      () => ({
-        height: "100%",
-        width: "100%",
-        justifyContent: "center" as const,
-        alignItems: "center" as const,
-      }),
-      []
-    );
-
+const TrafficLights = memo<TrafficLightsProps>(
+  ({ onClose, onMinimize, onMaximize }) => {
+    const handlers: Record<string, () => void> = {
+      close: onClose,
+      minimize: onMinimize,
+      maximize: onMaximize,
+    };
     return (
-      <div className="titlebar-button" style={buttonStyle}>
-        {/* @ts-ignore */}
-        <Pressable style={pressableStyle} onPress={onPress}>
-          <Icon
-            title={title}
-            image={image}
-            size={iconSize}
-            color={theme.textPrimary}
+      // @ts-ignore — zIndex keeps the lights above the drag region.
+      <View style={styles.trafficLights}>
+        {TRAFFIC_LIGHTS.map((light) => (
+          <Pressable
+            key={light.key}
+            onPress={handlers[light.key]}
+            style={({ pressed, hovered }: any) => [
+              styles.light,
+              { backgroundColor: light.color, opacity: pressed ? 0.6 : hovered ? 0.85 : 1 },
+            ]}
           />
-        </Pressable>
-      </div>
+        ))}
+      </View>
     );
   }
 );
@@ -74,6 +66,7 @@ interface CustomButtonProps {
   className?: string;
   color?: ColorValue;
   backgroundColor?: string;
+  borderColor?: string;
 }
 
 const CustomWindowTitleBarButtons = memo<CustomButtonProps>(
@@ -87,6 +80,7 @@ const CustomWindowTitleBarButtons = memo<CustomButtonProps>(
     marginRight = 0,
     color,
     backgroundColor,
+    borderColor,
   }) => {
     const isSvg = useMemo(() => image.includes(".svg"), [image]);
 
@@ -94,11 +88,13 @@ const CustomWindowTitleBarButtons = memo<CustomButtonProps>(
       () => ({
         height: size,
         width: size,
-        borderRadius: sc(3),
+        borderRadius: sc(6),
         marginRight,
         backgroundColor,
+        borderWidth: borderColor ? 1 : 0,
+        borderColor,
       }),
-      [size, marginRight, backgroundColor]
+      [size, marginRight, backgroundColor, borderColor]
     );
 
     const pressableStyle = useMemo(
@@ -130,7 +126,8 @@ const CustomWindowTitleBarButtons = memo<CustomButtonProps>(
 
 const WindowTitleBar = memo(() => {
   const { t, i18n } = useTranslation();
-  const { theme, themeType, setTheme } = useTheme();
+  const { theme, setTheme } = useTheme();
+  const themeMode = useTheme((s) => s.themeMode);
   const { show: showSettings } = useSettingsModal();
 
   const containerStyles = useMemo(
@@ -141,14 +138,20 @@ const WindowTitleBar = memo(() => {
         flexDirection: "row" as const,
         justifyContent: "space-between" as const,
         alignItems: "center" as const,
-        paddingTop: sc(15),
+        // Top inset so the logo/title row's vertical centre lines up with the
+        // native traffic lights (which sit nudged-down on the launcher window).
+        paddingTop: IN_GAME ? sc(15) : sc(16),
         paddingHorizontal: sc(15),
-        paddingBottom: sc(8),
+        paddingBottom: sc(12),
+        borderBottomWidth: 1,
+        borderBottomColor: `${theme.textPrimary}1F`,
       },
       leftSection: {
         flexDirection: "row" as const,
         alignItems: "center" as const,
-        flex: 1,
+        // Clear the native macOS traffic lights on the launcher window. The
+        // borderless in-game overlay draws its own lights, so no inset there.
+        paddingLeft: IN_GAME ? 0 : sc(80),
       },
       logoContainer: [
         styles.logoContainer,
@@ -193,7 +196,7 @@ const WindowTitleBar = memo(() => {
         filter: `drop-shadow(0 0 20px ${theme.primary}44)`,
       },
     }),
-    [theme.itemBackgroundColor]
+    [theme.itemBackgroundColor, theme.textPrimary]
   );
 
   const handleReconnect = useCallback(() => {
@@ -203,16 +206,57 @@ const WindowTitleBar = memo(() => {
     });
   }, []);
 
+  // Cycle system → dark → light → system. Drives the same themeMode the
+  // Preferences tab writes, so the two controls never disagree.
   const handleThemeToggle = useCallback(() => {
-    setTheme(themeType === "dark" ? "light" : "dark");
-  }, [themeType, setTheme]);
+    setTheme(
+      themeMode === "system" ? "dark" : themeMode === "dark" ? "light" : "system"
+    );
+  }, [themeMode, setTheme]);
 
   const handleMinimize = useCallback(() => {
     appWindow.minimize();
   }, []);
 
-  const handleMaximize = useCallback(() => {
-    appWindow.toggleMaximize();
+  // Window bounds saved before maximizing, restored on un-maximize.
+  const prevBounds = useRef<{ size: PhysicalSize; pos: PhysicalPosition } | null>(
+    null
+  );
+
+  // Maximize by stretching the window over the entire display — including the
+  // strip Tauri's own maximize leaves under the menu bar — so no gap shows.
+  // This is a plain resize, not macOS fullscreen (no separate Space).
+  const handleMaximize = useCallback(async () => {
+    const monitor = await currentMonitor();
+    if (!monitor) {
+      appWindow.toggleMaximize();
+      return;
+    }
+    const size = await appWindow.outerSize();
+    const covering =
+      size.width >= monitor.size.width && size.height >= monitor.size.height;
+
+    if (covering) {
+      const prev = prevBounds.current;
+      if (prev) {
+        await appWindow.setSize(prev.size);
+        await appWindow.setPosition(prev.pos);
+      } else {
+        await appWindow.setSize(new LogicalSize(1000, 700));
+        await appWindow.center();
+      }
+    } else {
+      prevBounds.current = {
+        size: await appWindow.outerSize(),
+        pos: await appWindow.outerPosition(),
+      };
+      await appWindow.setPosition(
+        new PhysicalPosition(monitor.position.x, monitor.position.y)
+      );
+      await appWindow.setSize(
+        new PhysicalSize(monitor.size.width, monitor.size.height)
+      );
+    }
   }, []);
 
   const handleClose = useCallback(() => {
@@ -231,26 +275,46 @@ const WindowTitleBar = memo(() => {
     );
   }, []);
 
-  const themeIcon = useMemo(
-    () =>
-      themeType === "dark" ? images.icons.lightTheme : images.icons.darkTheme,
-    [themeType]
-  );
+  const themeIcon = useMemo(() => {
+    if (themeMode === "system") return images.icons.autoTheme;
+    if (themeMode === "dark") return images.icons.darkTheme;
+    return images.icons.lightTheme;
+  }, [themeMode]);
 
   const buttonTitles = useMemo(() => {
     return {
       reconnect: t("reconnect"),
       settings: t("settings"),
-      minimize: t("minimize"),
-      maximize: t("maximize"),
-      close: t("close"),
     };
   }, [t, i18n.language]);
 
   return (
     // @ts-ignore
     <View style={containerStyles.main}>
+      {/* Drag region first so the buttons rendered after it stay clickable.
+          Dragging is started manually (not data-tauri-drag-region) so a
+          double-click runs our gap-free maximize, not Tauri's own maximize. */}
+      {!IN_GAME && (
+        <div
+          style={containerStyles.dragRegion}
+          onMouseDown={(e) => {
+            if (e.button !== 0) return;
+            if (e.detail >= 2) {
+              handleMaximize();
+            } else {
+              appWindow.startDragging();
+            }
+          }}
+        />
+      )}
       <View style={containerStyles.leftSection}>
+        {IN_GAME && (
+          <TrafficLights
+            onClose={handleClose}
+            onMinimize={handleMinimize}
+            onMaximize={handleMaximize}
+          />
+        )}
         <View style={containerStyles.logoContainer}>
           <Icon image={images.icons.omp} size={sc(22)} />
         </View>
@@ -263,9 +327,6 @@ const WindowTitleBar = memo(() => {
           Open Multiplayer
         </Text>
       </View>
-      {!IN_GAME && (
-        <div data-tauri-drag-region style={containerStyles.dragRegion} />
-      )}
       {/* @ts-ignore */}
       <View style={containerStyles.rightSection}>
         {IN_GAME && (
@@ -284,38 +345,24 @@ const WindowTitleBar = memo(() => {
         )}
         <CustomWindowTitleBarButtons
           title=""
-          iconSize={sc(30)}
+          iconSize={sc(16)}
           image={themeIcon}
-          marginRight={sc(10)}
+          color={theme.textPrimary}
+          backgroundColor={theme.itemBackgroundColor}
+          borderColor={`${theme.textPrimary}40`}
+          marginRight={!IN_GAME ? sc(10) : 0}
           onPress={handleThemeToggle}
         />
         {!IN_GAME && (
-          <>
-            <CustomWindowTitleBarButtons
-              title={buttonTitles.settings}
-              image={images.icons.settings}
-              marginRight={sc(16)}
-              color={theme.textSecondary}
-              backgroundColor={theme.itemBackgroundColor}
-              onPress={showSettings}
-            />
-            <NativeWindowTitleBarButtons
-              title={buttonTitles.minimize}
-              image={images.icons.windowMinimize}
-              onPress={handleMinimize}
-            />
-            <NativeWindowTitleBarButtons
-              title={buttonTitles.maximize}
-              image={images.icons.windowMaximize}
-              onPress={handleMaximize}
-            />
-          </>
+          <CustomWindowTitleBarButtons
+            title={buttonTitles.settings}
+            image={images.icons.settings}
+            color={theme.textPrimary}
+            backgroundColor={theme.itemBackgroundColor}
+            borderColor={`${theme.textPrimary}40`}
+            onPress={showSettings}
+          />
         )}
-        <NativeWindowTitleBarButtons
-          title={buttonTitles.close}
-          image={images.icons.windowClose}
-          onPress={handleClose}
-        />
       </View>
     </View>
   );
@@ -329,9 +376,22 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     borderRadius: sc(5),
   },
+  trafficLights: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: sc(8),
+    marginRight: sc(14),
+    // @ts-ignore — sit above the absolute drag region so clicks land.
+    zIndex: 20,
+  },
+  light: {
+    height: sc(13),
+    width: sc(13),
+    borderRadius: sc(7),
+  },
 });
 
-NativeWindowTitleBarButtons.displayName = "NativeWindowTitleBarButtons";
+TrafficLights.displayName = "TrafficLights";
 CustomWindowTitleBarButtons.displayName = "CustomWindowTitleBarButtons";
 WindowTitleBar.displayName = "WindowTitleBar";
 

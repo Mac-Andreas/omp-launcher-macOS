@@ -1,3 +1,26 @@
+/* Lock whole-app scroll / rubber-band bounce — only inner ScrollViews
+   should scroll, never the page itself. */
+html,
+body,
+#root {
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+/* No text selection by mouse drag / double-click. Inputs and elements
+   RN-web marks selectable get an inline user-select that overrides this. */
+* {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+input,
+textarea {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
 #server-list-item-dark {
   background-color: #30303880;
   transition: 0.4s;
@@ -208,4 +231,11 @@
   right: 10px;
   bottom: 10px;
   border-radius: 1000px;
+}
+
+/* Solid dim only — no backdrop-filter. On a transparent Tauri window
+   backdrop-filter samples through the window and blurs whatever app sits
+   behind open.mp, not just the app's own content. */
+.modal-blur-backdrop {
+  background-color: rgba(0, 0, 0, 0.58);
 }

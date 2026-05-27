@@ -54,9 +54,16 @@ async fn main() {
         deeplink::prepare(DEEPLINK_IDENTIFIER);
     }
 
-    if let Err(e) = simple_logging::log_to_file(LOG_FILE_NAME, LevelFilter::Info) {
-        eprintln!("Failed to initialize logging: {}", e);
-        exit(1);
+    let log_path = dirs_next::data_local_dir()
+        .map(|p| p.join(DATA_DIR_NAME))
+        .and_then(|dir| {
+            fs::create_dir_all(&dir).ok()?;
+            Some(dir.join(LOG_FILE_NAME))
+        })
+        .unwrap_or_else(|| std::env::temp_dir().join(LOG_FILE_NAME));
+
+    if let Err(e) = simple_logging::log_to_file(&log_path, LevelFilter::Info) {
+        eprintln!("Failed to initialize logging at {:?}: {}", log_path, e);
     }
 
     #[cfg(windows)]
@@ -164,13 +171,32 @@ async fn handle_cli_args() -> Result<()> {
 }
 
 async fn run_tauri_app() -> Result<()> {
-    let builder_result = tauri::Builder::default()
+    #[allow(unused_mut)]
+    let mut builder = tauri::Builder::default();
+
+    // Single-instance: a second launch focuses the existing window instead of
+    // opening another copy. Must be the first plugin registered.
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder.plugin(tauri_plugin_single_instance::init(
+            |app, _argv, _cwd| {
+                if let Some(window) = app.get_window("main") {
+                    let _ = window.unminimize();
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+            },
+        ));
+    }
+
+    let builder_result = builder
         .plugin(tauri_plugin_upload::init())
         .setup(setup_tauri_app)
         .invoke_handler(tauri::generate_handler![
             get_uri_scheme_value,
             commands::inject,
             commands::get_gtasa_path_from_samp,
+            commands::get_gtasa_path_for_bottle,
             commands::get_nickname_from_samp,
             commands::get_samp_favorite_list,
             commands::rerun_as_admin,
@@ -180,8 +206,18 @@ async fn run_tauri_app() -> Result<()> {
             commands::log_warn,
             commands::log_error,
             commands::get_checksum_of_files,
+            commands::kill_game,
+            commands::is_game_running,
+            commands::get_macos_health,
+            commands::list_bottles,
             commands::extract_7z,
             commands::copy_files_to_gtasa,
+            commands::prepare_macos_samp_files,
+            commands::uninstall_macos_samp_files,
+            commands::open_in_finder,
+            commands::clear_samp_user_cache,
+            commands::set_traffic_lights,
+            commands::realign_traffic_lights,
             query::query_server,
             ipc::send_message_to_game
         ])
@@ -201,7 +237,19 @@ fn setup_tauri_app(app: &mut tauri::App) -> std::result::Result<(), Box<dyn std:
 
     if let Some(main_window) = app.get_window("main") {
         main_window.set_min_size(Some(PhysicalSize::new(WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT)))?;
+        // Hide the native traffic lights before the window is shown so the
+        // loading splash has no window chrome — the frontend reveals them
+        // again once the main UI is ready.
+        #[cfg(target_os = "macos")]
+        commands::set_traffic_lights_visible(&main_window, false);
+        // Always open centred (otherwise macOS may restore an old position).
+        let _ = main_window.center();
+        let _ = main_window.show();
+        let _ = main_window.set_focus();
     }
+
+    #[cfg(target_os = "macos")]
+    app.set_activation_policy(tauri::ActivationPolicy::Regular);
 
     let config = handle.config();
     if let Some(path) = app_data_dir(&config) {

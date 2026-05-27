@@ -1,0 +1,66 @@
+Open Multiplayer Launcher — License Summary
+
+This software is licensed under the Mozilla Public License 2.0 (MPL 2.0),
+with an additional trademark and branding supplement from the open.mp
+project. By installing this software you agree to the terms below.
+
+
+WHAT YOU CAN DO
+  •  Use the launcher for personal or commercial purposes.
+  •  Read, modify and audit the source code.
+  •  Redistribute the original or modified versions, provided the
+     branding restrictions below are honored.
+  •  Combine the source with your own code under MPL 2.0's file-level
+     copyleft.
+  •  Receive a patent grant from each contributor (MPL 2.0 §2.1).
+
+
+WHAT YOU CANNOT DO
+  •  Rename or rebrand the launcher.
+  •  Use the "open.mp", "open multiplayer" or "omp" trademarks, logos,
+     icons, bundle identifier or other identifiers to ship a separate
+     product, fork or competing identity.
+  •  Strip, replace or alter the license, copyright notices, logos or
+     icons distributed with the software.
+  •  Sublicense the covered files under proprietary terms.
+  •  Hold the contributors liable for damages, or expect any warranty
+     beyond MPL 2.0's disclaimer.
+
+
+HOW THE TRADEMARK SUPPLEMENT INTERACTS WITH MPL 2.0
+
+  Redistribution of this software, including modified versions, is
+  permitted only if:
+
+    1. The original application name, branding, icons, logos and all
+       other identifiers stay intact and unmodified.
+    2. You do not rename or rebrand the application in any way.
+    3. You do not use this software as the basis for a renamed or
+       rebranded product, project or company.
+    4. You do not present the software under a different project,
+       company or identity.
+
+  Distribution under any other name, branding or identity is strictly
+  prohibited unless you receive explicit written permission from the
+  open.mp project.
+
+
+FULL LEGAL TEXT
+
+The full Mozilla Public License 2.0 governs every file marked as
+"Covered Software". Read it at:
+
+    https://www.mozilla.org/en-US/MPL/2.0/
+
+A verbatim copy is bundled inside the application, viewable from
+Settings → License → Full license after installation.
+
+
+SUMMARY
+
+  •  Free to use, modify, share.
+  •  Keep the open.mp name and branding intact.
+  •  No warranty, no liability.
+
+Clicking "Continue" and then "Agree" means you accept these terms.
+Choose "Disagree" to cancel the installation.

@@ -7,8 +7,8 @@
     "withGlobalTauri": false
   },
   "package": {
-    "productName": "omp-launcher",
-    "version": "1.6.3"
+    "productName": "Open Multiplayer",
+    "version": "1.6.3-arm-beta.1"
   },
   "tauri": {
     "allowlist": {
@@ -52,6 +52,10 @@
         "icons/icon.icns",
         "icons/icon.ico"
       ],
+      "macOS": {
+        "signingIdentity": "-",
+        "minimumSystemVersion": "10.15"
+      },
       "windows": {
         "allowDowngrades": true,
         "certificateThumbprint": null,
@@ -82,8 +86,10 @@
         "title": "Open Multiplayer Launcher",
         "width": 1000,
         "height": 700,
-        "decorations": false,
+        "decorations": true,
         "transparent": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
         "userAgent": "omp-launcher",
         "center": true
       }
