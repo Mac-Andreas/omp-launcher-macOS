@@ -142,10 +142,16 @@ fn restore_vorbis_proxy(game_dir: &Path) {
 // module-named backtrace — Wine dumps that unconditionally, regardless of
 // WINEDEBUG. DETAILED turns those traces back on plus module/dll/process
 // tracking: large files and a slower game, but a full trail of everything.
+// NOTE: temporary diagnostic — +mmdevapi,+coreaudio trace the audio device
+// init so the intermittent mmdevapi assert(!status) names the failing CoreAudio
+// device. These two channels are quiet outside the brief audio init, so logs
+// stay small. Revert once the culprit device is identified.
 #[cfg(not(target_os = "windows"))]
-const STANDARD_WINE_CHANNELS: &str = "err+all,fixme-all,warn-all,trace-all";
+const STANDARD_WINE_CHANNELS: &str =
+    "err+all,fixme-all,warn-all,trace-all,+mmdevapi,+coreaudio";
 #[cfg(not(target_os = "windows"))]
-const DETAILED_WINE_CHANNELS: &str = "+seh,+module,+loaddll,+process,err+all,fixme+all";
+const DETAILED_WINE_CHANNELS: &str =
+    "+seh,+module,+loaddll,+process,+mmdevapi,+coreaudio,err+all,fixme+all";
 
 // Create <game>/omp-logs/session_<YYYY-MM-DD_HH-MM-SS>.log, write a header, and
 // return its path (the file is closed so cxstart can append wine's stderr to it
