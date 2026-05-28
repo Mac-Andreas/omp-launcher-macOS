@@ -7,7 +7,7 @@ import {
   PhysicalSize,
 } from "@tauri-apps/api/window";
 import { useTranslation } from "react-i18next";
-import { memo, useCallback, useMemo, useRef } from "react";
+import { memo, useCallback, useMemo, useRef, useState, useEffect } from "react";
 import { ColorValue, Pressable, StyleSheet, TouchableOpacity, View } from "react-native";
 import Icon from "../components/Icon";
 import Text from "../components/Text";
@@ -16,6 +16,206 @@ import { images } from "../constants/images";
 import { useSettingsModal } from "../states/settingsModal";
 import { useTheme } from "../states/theme";
 import { sc } from "../utils/sizeScaler";
+import { useGameLaunch } from "../states/gameLaunch";
+
+const SUPABASE_URL  = "https://tmenljjfshefocoqnwgi.supabase.co";
+const SUPABASE_ANON = "sb_publishable_waBEtV1eAdoXRMET_ZRxpw_ANZUgZBw";
+
+// Fetch the active feedback campaign (if any) for this device's source
+async function fetchActiveCampaign(source: string) {
+  try {
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/feedback_campaigns?select=*&status=eq.active&order=activated_at.desc&limit=1`,
+      { headers: { apikey: SUPABASE_ANON, Authorization: `Bearer ${SUPABASE_ANON}` } }
+    );
+    if (!res.ok) return null;
+    const rows = await res.json();
+    const campaign = rows?.find(
+      (c: any) => !c.target_source || c.target_source === source
+    );
+    return campaign ?? null;
+  } catch { return null; }
+}
+
+async function submitFeedback(campaignId: number, anonymousId: string, source: string, answers: Record<number, string | number>) {
+  try {
+    await fetch(`${SUPABASE_URL}/rest/v1/feedback_responses`, {
+      method: "POST",
+      headers: {
+        apikey: SUPABASE_ANON,
+        Authorization: `Bearer ${SUPABASE_ANON}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ campaign_id: campaignId, anonymous_id: anonymousId, source, answers }),
+    });
+  } catch { /* silent */ }
+}
+
+// Inline feedback popup component
+const FeedbackPopup = memo(({ onClose }: { onClose: () => void }) => {
+  const { theme } = useTheme();
+  const [campaign, setCampaign] = useState<any>(null);
+  const [answers, setAnswers] = useState<Record<number, string | number>>({});
+  const [submitted, setSubmitted] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  // Get anonymous_id from localStorage (same key as telemetry.ts)
+  const anonId = typeof localStorage !== "undefined"
+    ? (localStorage.getItem("telemetry-anonymous-id") ?? "unknown")
+    : "unknown";
+
+  useEffect(() => {
+    fetchActiveCampaign("macandreas").then(c => {
+      setCampaign(c);
+      setLoading(false);
+    });
+  }, []);
+
+  const handleSubmit = async () => {
+    if (!campaign) return;
+    await submitFeedback(campaign.id, anonId, "macandreas", answers);
+    setSubmitted(true);
+  };
+
+  const overlayStyle = useMemo(() => ({
+    position: "fixed" as const,
+    inset: 0,
+    background: "rgba(0,0,0,0.55)",
+    backdropFilter: "blur(6px)",
+    WebkitBackdropFilter: "blur(6px)",
+    zIndex: 9999,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+  }), []);
+
+  const modalStyle = useMemo(() => ({
+    background: theme.secondary,
+    border: `1px solid ${theme.textPrimary}22`,
+    borderRadius: sc(12),
+    width: Math.min(420, window.innerWidth - 40),
+    maxHeight: "80vh",
+    overflow: "hidden" as const,
+    display: "flex",
+    flexDirection: "column" as const,
+    boxShadow: "0 24px 64px rgba(0,0,0,0.7)",
+  }), [theme]);
+
+  // Pure HTML rendering — this popup lives in a WebView so CSS strings work fine
+  const btnBase: React.CSSProperties = {
+    flex: 1, padding: `${sc(9)}px`, borderRadius: sc(8),
+    textAlign: "center", cursor: "pointer", fontWeight: 600,
+    fontSize: sc(13), border: "none",
+  };
+
+  if (loading) return (
+    <div style={overlayStyle}>
+      <div style={{...modalStyle, padding: sc(24), textAlign: "center"}}>
+        <span style={{color: theme.textSecondary, fontSize: sc(14)}}>Loading…</span>
+      </div>
+    </div>
+  );
+
+  if (!campaign) return (
+    <div style={overlayStyle}>
+      <div style={{...modalStyle, padding: sc(24)}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:sc(16)}}>
+          <span style={{color:theme.textPrimary,fontWeight:600,fontSize:sc(15)}}>💬 Feedback</span>
+          <button onClick={onClose} style={{background:"none",border:"none",color:theme.textSecondary,fontSize:sc(18),cursor:"pointer",padding:sc(4)}}>✕</button>
+        </div>
+        <p style={{color:theme.textSecondary,fontSize:sc(13),margin:`0 0 ${sc(16)}px`}}>No active feedback campaigns at this time. Check back later!</p>
+        <button onClick={onClose} style={{...btnBase,backgroundColor:theme.primary,color:"#fff",width:"100%"}}>Close</button>
+      </div>
+    </div>
+  );
+
+  if (submitted) return (
+    <div style={overlayStyle}>
+      <div style={{...modalStyle, padding: sc(24), textAlign: "center"}}>
+        <div style={{fontSize:sc(32),marginBottom:sc(8)}}>🎉</div>
+        <div style={{color:theme.textPrimary,fontWeight:600,fontSize:sc(16),marginBottom:sc(8)}}>Thank you!</div>
+        <p style={{color:theme.textSecondary,fontSize:sc(13),marginBottom:sc(20)}}>Your feedback has been submitted.</p>
+        <button onClick={onClose} style={{...btnBase,backgroundColor:theme.primary,color:"#fff",width:"100%"}}>Close</button>
+      </div>
+    </div>
+  );
+
+  const questions: any[] = campaign.questions || [];
+
+  return (
+    <div style={overlayStyle}>
+      <div style={modalStyle}>
+        {/* Header */}
+        <div style={{padding:`${sc(14)}px ${sc(16)}px`,borderBottom:`1px solid ${theme.textPrimary}1F`,display:"flex",alignItems:"center"}}>
+          <span style={{color:theme.textPrimary,fontWeight:600,fontSize:sc(15),flex:1}}>💬 {campaign.title}</span>
+          <button onClick={onClose} style={{background:"none",border:"none",color:theme.textSecondary,fontSize:sc(18),cursor:"pointer",padding:sc(4)}}>✕</button>
+        </div>
+
+        {/* Questions — scrollable */}
+        <div style={{flex:1,overflowY:"auto",padding:`${sc(16)}px`}}>
+          {campaign.description && (
+            <p style={{color:theme.textSecondary,fontSize:sc(12),marginBottom:sc(14)}}>{campaign.description}</p>
+          )}
+          {questions.map((q: any, i: number) => (
+            <div key={i} style={{marginBottom:sc(16)}}>
+              <div style={{color:theme.textPrimary,fontWeight:600,fontSize:sc(13),marginBottom:sc(8)}}>
+                {i+1}. {q.text}
+              </div>
+              {q.type === "likert" ? (
+                <div style={{display:"flex",gap:sc(6)}}>
+                  {[1,2,3,4,5].map(n => (
+                    <button key={n} onClick={() => setAnswers(a=>({...a,[i]:n}))}
+                      style={{flex:1,padding:sc(8),borderRadius:sc(6),cursor:"pointer",
+                        backgroundColor: answers[i]===n ? theme.primary : theme.itemBackgroundColor,
+                        border:`1px solid ${answers[i]===n ? theme.primary : theme.textPrimary+'44'}`,
+                        color: answers[i]===n ? "#fff" : theme.textPrimary, fontSize:sc(13), fontWeight:600}}>
+                      {n}
+                    </button>
+                  ))}
+                </div>
+              ) : q.type === "mcq" ? (
+                <div style={{display:"flex",flexDirection:"column",gap:sc(6)}}>
+                  {(q.options||[]).map((opt: string, oi: number) => (
+                    <button key={oi} onClick={() => setAnswers(a=>({...a,[i]:opt}))}
+                      style={{padding:`${sc(8)}px ${sc(10)}px`,borderRadius:sc(6),cursor:"pointer",textAlign:"left",
+                        backgroundColor: answers[i]===opt ? `${theme.primary}22` : theme.itemBackgroundColor,
+                        border:`1px solid ${answers[i]===opt ? theme.primary : theme.textPrimary+'44'}`,
+                        color: answers[i]===opt ? theme.primary : theme.textPrimary, fontSize:sc(13)}}>
+                      ○ {opt}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <textarea
+                  value={String(answers[i] ?? "")}
+                  onChange={(e) => setAnswers(a=>({...a,[i]:e.target.value}))}
+                  placeholder="Your answer…"
+                  style={{width:"100%",backgroundColor:theme.itemBackgroundColor,
+                    border:`1px solid ${theme.textPrimary}44`,borderRadius:sc(6),
+                    padding:sc(8),color:theme.textPrimary,fontSize:sc(13),minHeight:sc(60),
+                    resize:"vertical",outline:"none",fontFamily:"inherit"}}
+                />
+              )}
+            </div>
+          ))}
+        </div>
+
+        {/* Footer */}
+        <div style={{padding:`${sc(12)}px ${sc(16)}px`,borderTop:`1px solid ${theme.textPrimary}1F`,display:"flex",gap:sc(8)}}>
+          <button onClick={onClose}
+            style={{...btnBase,backgroundColor:theme.itemBackgroundColor,color:theme.textSecondary,
+              border:`1px solid ${theme.textPrimary}22`}}>
+            Skip
+          </button>
+          <button onClick={handleSubmit}
+            style={{...btnBase,backgroundColor:theme.primary,color:"#fff"}}>
+            Submit
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+});
 
 // Fallback traffic lights for the borderless in-game overlay window only.
 // The main launcher window uses real macOS controls (titleBarStyle: Overlay).
@@ -91,8 +291,8 @@ const CustomWindowTitleBarButtons = memo<CustomButtonProps>(
         borderRadius: sc(6),
         marginRight,
         backgroundColor,
-        borderWidth: borderColor ? 1 : 0,
-        borderColor,
+        border: borderColor ? `1px solid ${borderColor}` : "none",
+        boxSizing: "border-box" as const,
       }),
       [size, marginRight, backgroundColor, borderColor]
     );
@@ -129,6 +329,15 @@ const WindowTitleBar = memo(() => {
   const { theme, setTheme } = useTheme();
   const themeMode = useTheme((s) => s.themeMode);
   const { show: showSettings } = useSettingsModal();
+  const { launching } = useGameLaunch();
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [hasCampaign, setHasCampaign] = useState(false);
+
+  // Check once on mount whether there's an active campaign (for dot indicator)
+  useEffect(() => {
+    if (IN_GAME) return;
+    fetchActiveCampaign("macandreas").then(c => setHasCampaign(!!c));
+  }, []);
 
   const containerStyles = useMemo(
     () => ({
@@ -140,7 +349,7 @@ const WindowTitleBar = memo(() => {
         alignItems: "center" as const,
         // Top inset so the logo/title row's vertical centre lines up with the
         // native traffic lights (which sit nudged-down on the launcher window).
-        paddingTop: IN_GAME ? sc(15) : sc(16),
+        paddingTop: IN_GAME ? sc(15) : sc(10),
         paddingHorizontal: sc(15),
         paddingBottom: sc(12),
         borderBottomWidth: 1,
@@ -343,6 +552,43 @@ const WindowTitleBar = memo(() => {
             </TouchableOpacity>
           </View>
         )}
+        {/* Feedback button — hidden during gameplay, only shown when a campaign is active */}
+        {!IN_GAME && !launching && (
+          <div style={{ position: "relative", marginRight: sc(8) }}>
+            <Pressable
+              onPress={() => setFeedbackOpen(true)}
+              style={({ pressed, hovered }: any) => ({
+                height: sc(30),
+                paddingHorizontal: sc(10),
+                borderRadius: sc(6),
+                backgroundColor: theme.itemBackgroundColor,
+                border: `1px solid ${theme.textPrimary}40`,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                opacity: pressed ? 0.7 : hovered ? 0.9 : 1,
+                flexDirection: "row" as const,
+                gap: sc(5),
+              })}
+            >
+              <Text size={1} color={theme.textPrimary} style={{ fontSize: sc(11) }}>
+                💬
+              </Text>
+              <Text size={1} color={theme.textPrimary} style={{ fontSize: sc(11) }}>
+                Provide Feedback
+              </Text>
+            </Pressable>
+            {/* Dot indicator when an active campaign exists */}
+            {hasCampaign && (
+              <div style={{
+                position: "absolute", top: sc(-2), right: sc(-2),
+                width: sc(7), height: sc(7), borderRadius: sc(4),
+                backgroundColor: "#1DB954",
+                boxShadow: "0 0 6px #1DB954",
+              }} />
+            )}
+          </div>
+        )}
         <CustomWindowTitleBarButtons
           title=""
           iconSize={sc(16)}
@@ -362,6 +608,10 @@ const WindowTitleBar = memo(() => {
             borderColor={`${theme.textPrimary}40`}
             onPress={showSettings}
           />
+        )}
+        {/* Feedback popup — rendered outside normal flow with backdrop blur */}
+        {feedbackOpen && (
+          <FeedbackPopup onClose={() => setFeedbackOpen(false)} />
         )}
       </View>
     </View>
