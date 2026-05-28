@@ -19,7 +19,12 @@ import { fetchServers, getIpAddress } from "../utils/helpers";
 import { Log } from "./logger";
 import { PING_TIMEOUT_VALUE } from "./query";
 import { sc } from "./sizeScaler";
-import { telemetryGameJoin } from "./telemetry";
+import {
+  telemetryGameJoin,
+  telemetryGameLeave,
+  stopHeartbeat,
+  startHeartbeat,
+} from "./telemetry";
 import { Server } from "./types";
 
 const showOkModal = (title: string, description: string) => {
@@ -504,6 +509,24 @@ export const startGame = async (
         }
         if (running) {
           setLaunching(false);
+          // Pause heartbeat while the game is open — avoids loading the CPU
+          // during gameplay. Resume + send game_leave when the process exits.
+          stopHeartbeat();
+          const gameStart = Date.now();
+          const watchExit = async () => {
+            let stillRunning = false;
+            try {
+              stillRunning = (await invoke<boolean>("is_game_running")) === true;
+            } catch { /* keep watching */ }
+            if (stillRunning) {
+              setTimeout(watchExit, 5_000);
+            } else {
+              const timeOnServer = Math.round((Date.now() - gameStart) / 1000);
+              telemetryGameLeave(`${server.ip}:${server.port}`, timeOnServer);
+              startHeartbeat();
+            }
+          };
+          setTimeout(watchExit, 5_000);
           return;
         }
         if (Date.now() - start >= TIMEOUT_MS) {
