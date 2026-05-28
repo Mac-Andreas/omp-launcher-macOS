@@ -8,9 +8,11 @@ import {
   View,
 } from "react-native";
 import Icon from "../../../components/Icon";
+import IOSSwitch from "../../../components/IOSSwitch";
 import Text from "../../../components/Text";
 import { IN_GAME } from "../../../constants/app";
 import { images } from "../../../constants/images";
+import { useMessageBox } from "../../../states/messageModal";
 import { usePersistentServers } from "../../../states/servers";
 import { useSettings } from "../../../states/settings";
 import { useTheme } from "../../../states/theme";
@@ -23,12 +25,67 @@ import { Log } from "../../../utils/logger";
 import { sc } from "../../../utils/sizeScaler";
 import { Server } from "../../../utils/types";
 
+// A labelled row with an iOS-style switch on the right and help text below.
+// `nested` indents the row and draws a branch glyph (used for Detailed debug
+// hanging off Debug logging). `trailing` renders before the switch (Show logs).
+const ToggleRow = ({
+  label,
+  help,
+  value,
+  onChange,
+  disabled,
+  nested,
+  trailing,
+}: {
+  label: string;
+  help: string;
+  value: boolean;
+  onChange: (next: boolean) => void;
+  disabled?: boolean;
+  nested?: boolean;
+  trailing?: React.ReactNode;
+}) => {
+  const { theme } = useTheme();
+  return (
+    <View
+      style={[
+        { opacity: disabled ? 0.5 : 1 },
+        nested && styles.nestedRow,
+      ]}
+    >
+      <View style={styles.toggleHead}>
+        {nested && (
+          <Text size={2} color={`${theme.textPrimary}66`} style={styles.branch}>
+            {"↳"}
+          </Text>
+        )}
+        <Text
+          semibold
+          size={2}
+          color={theme.textPrimary}
+          style={{ flex: 1 }}
+          numberOfLines={1}
+        >
+          {label}
+        </Text>
+        {trailing}
+        <IOSSwitch value={value} onChange={onChange} disabled={disabled} />
+      </View>
+      <Text
+        size={1}
+        color={`${theme.textPrimary}88`}
+        style={[styles.sectionSub, nested && styles.nestedSub]}
+        numberOfLines={2}
+      >
+        {help}
+      </Text>
+    </View>
+  );
+};
+
 const IMPORT_GREEN = "#3FB950";
 const EXPORT_ORANGE = "#E08A33";
 
-// Big action card used for the two favorites tiles (Import / Export). Coloured
-// border + filled icon chip make the destructive vs additive intent obvious at
-// a glance.
 const ActionCard = ({
   icon,
   title,
@@ -81,13 +138,35 @@ const ActionCard = ({
 
 const Advanced = () => {
   const { theme } = useTheme();
+  const { showMessageBox } = useMessageBox();
   const {
     customGameExe,
     setCustomGameExe,
     bottleName,
     setGTASAPath,
     setNickName,
+    gtasaPath,
+    debugMode,
+    setDebugMode,
+    debugDetailed,
+    setDebugDetailed,
+    audioFix,
+    setAudioFix,
   } = useSettings();
+
+  const revealLogs = () => {
+    invoke("open_in_finder", { path: `${gtasaPath}/omp-logs` }).catch(() =>
+      showMessageBox({
+        title: t("settings_debug_no_logs_title", { defaultValue: "No logs yet" }),
+        description: t("settings_debug_no_logs_desc", {
+          defaultValue:
+            "Enable debug logging and launch the game once to generate logs.",
+        }),
+        boxWidth: 380,
+        buttons: [{ title: t("close"), onPress: () => {} }],
+      })
+    );
+  };
 
   const importNicknameAndPath = async () => {
     try {
@@ -150,46 +229,6 @@ const Advanced = () => {
       contentContainerStyle={styles.container}
       showsVerticalScrollIndicator={false}
     >
-      {!IN_GAME && (
-        <>
-          <Text semibold size={2} color={theme.textPrimary}>
-            {t("settings_custom_game_exe_label")}
-          </Text>
-          <Text
-            size={1}
-            color={`${theme.textPrimary}88`}
-            style={styles.sectionSub}
-            numberOfLines={0}
-          >
-            {t("settings_custom_game_exe_subtitle", {
-              defaultValue:
-                "Override the auto-detected gta-sa.exe. Leave blank to use the CrossOver bottle's copy.",
-            })}
-          </Text>
-          <TextInput
-            value={customGameExe}
-            onChangeText={setCustomGameExe}
-            placeholder="/Users/.../Grand Theft Auto San Andreas/gta-sa.exe"
-            placeholderTextColor={`${theme.textPrimary}66`}
-            // @ts-ignore
-            style={[
-              styles.input,
-              {
-                color: theme.textPrimary,
-                backgroundColor: theme.textInputBackgroundColor,
-                borderColor: `${theme.textPrimary}1F`,
-              },
-            ]}
-          />
-          <View
-            style={[
-              styles.divider,
-              { backgroundColor: `${theme.textPrimary}14` },
-            ]}
-          />
-        </>
-      )}
-
       <Text semibold size={2} color={theme.textPrimary}>
         {t("settings_tile_import_combined_title", {
           defaultValue: "Import & backup",
@@ -259,6 +298,106 @@ const Advanced = () => {
           onPress={importFavoritesFromSamp}
         />
       </View>
+
+      {!IN_GAME && (
+        <>
+          <View
+            style={[styles.divider, { backgroundColor: `${theme.textPrimary}14` }]}
+          />
+          <Text semibold size={2} color={theme.textPrimary}>
+            {t("settings_custom_game_exe_label")}
+          </Text>
+          <Text
+            size={1}
+            color={`${theme.textPrimary}88`}
+            style={styles.sectionSub}
+            numberOfLines={0}
+          >
+            {t("settings_custom_game_exe_subtitle", {
+              defaultValue:
+                "Override the auto-detected gta-sa.exe. Leave blank to use the CrossOver bottle's copy.",
+            })}
+          </Text>
+          <TextInput
+            value={customGameExe}
+            onChangeText={setCustomGameExe}
+            placeholder="/Users/.../Grand Theft Auto San Andreas/gta-sa.exe"
+            placeholderTextColor={`${theme.textPrimary}66`}
+            // @ts-ignore
+            style={[
+              styles.input,
+              {
+                color: theme.textPrimary,
+                backgroundColor: theme.textInputBackgroundColor,
+                borderColor: `${theme.textPrimary}1F`,
+              },
+            ]}
+          />
+        </>
+      )}
+
+      <View
+        style={[styles.divider, { backgroundColor: `${theme.textPrimary}14` }]}
+      />
+
+      <ToggleRow
+        label={t("settings_debug_label", { defaultValue: "Debug logging" })}
+        help={t("settings_debug_help", {
+          defaultValue:
+            "Logs each launch to <game>/omp-logs/, one file per session.",
+        })}
+        value={debugMode}
+        onChange={setDebugMode}
+        trailing={
+          debugMode && gtasaPath ? (
+            <Pressable
+              onPress={revealLogs}
+              style={({ hovered }: any) => [
+                styles.showLogsBtn,
+                {
+                  borderColor: `${theme.primary}55`,
+                  backgroundColor: hovered
+                    ? `${theme.primary}22`
+                    : `${theme.primary}12`,
+                },
+              ]}
+            >
+              <Text size={1} semibold color={theme.primary}>
+                {t("settings_debug_show_logs", { defaultValue: "Show logs" })}
+              </Text>
+            </Pressable>
+          ) : null
+        }
+      />
+
+      {debugMode && (
+        <ToggleRow
+          nested
+          label={t("settings_debug_detailed_label", {
+            defaultValue: "Detailed debug",
+          })}
+          help={t("settings_debug_detailed_help", {
+            defaultValue:
+              "Traces everything — large files, slower game. For hard crashes only.",
+          })}
+          value={debugDetailed}
+          onChange={setDebugDetailed}
+        />
+      )}
+
+      <View
+        style={[styles.divider, { backgroundColor: `${theme.textPrimary}14` }]}
+      />
+
+      <ToggleRow
+        label={t("settings_audio_fix_label", { defaultValue: "Audio fix" })}
+        help={t("settings_audio_fix_help", {
+          defaultValue:
+            "Forces a safe 48kHz/16-bit audio format to stop the macOS crash. Off reverts to Wine default.",
+        })}
+        value={audioFix}
+        onChange={setAudioFix}
+      />
     </ScrollView>
   );
 };
@@ -266,11 +405,34 @@ const Advanced = () => {
 const styles = StyleSheet.create({
   container: {
     paddingHorizontal: sc(14),
-    paddingVertical: sc(12),
+    paddingTop: sc(16),
+    paddingBottom: sc(12),
     gap: sc(8),
   },
   sectionSub: {
     lineHeight: sc(16),
+  },
+  toggleHead: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: sc(12),
+  },
+  nestedRow: {
+    marginLeft: sc(14),
+  },
+  branch: {
+    marginRight: sc(2),
+  },
+  nestedSub: {
+    marginLeft: sc(18),
+  },
+  showLogsBtn: {
+    paddingVertical: sc(4),
+    paddingHorizontal: sc(10),
+    borderRadius: sc(6),
+    borderWidth: 1,
+    // @ts-ignore
+    cursor: "pointer",
   },
   input: {
     height: sc(38),

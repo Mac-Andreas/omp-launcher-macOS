@@ -16,8 +16,6 @@ const Preferences = () => {
   const { hide: hideSettings } = useSettingsModal();
   const { nickName, setNickName } = useSettings();
 
-  // Map a language label back to its `type` key. The dropdown speaks display
-  // strings; the persisted state speaks type codes.
   const languages = Object.entries(getLanguages());
   const labelByType: Record<string, string> = {};
   const typeByLabel: Record<string, string> = {};
@@ -146,8 +144,6 @@ const Preferences = () => {
         onChange={(label) => {
           const type = typeByLabel[label];
           if (type) {
-            // typeByLabel mirrors getLanguages() keys, which match the
-            // LanguageType union — safe to assert.
             setLanguage(type as any);
             hideSettings();
           }

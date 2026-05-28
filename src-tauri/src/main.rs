@@ -146,6 +146,10 @@ async fn handle_cli_args() -> Result<()> {
                     omp_path,
                     &password,
                     "",
+                    None,
+                    false,
+                    false,
+                    true,
                 )
                 .await
                 .map_err(|e| LauncherError::InternalError(e.to_string()))?;
@@ -205,6 +209,7 @@ async fn run_tauri_app() -> Result<()> {
             commands::log_info,
             commands::log_warn,
             commands::log_error,
+            commands::request_documents_access,
             commands::get_checksum_of_files,
             commands::kill_game,
             commands::is_game_running,

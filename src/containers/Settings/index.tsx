@@ -18,10 +18,10 @@ import { useSettingsModal } from "../../states/settingsModal";
 import { useTheme } from "../../states/theme";
 import { sc } from "../../utils/sizeScaler";
 import Advanced from "./Tab/Advanced";
-import DangerZone from "./Tab/DangerZone";
 import General from "./Tab/General";
 import Languages from "./Tab/Languages";
 import License from "./Tab/License";
+import Privacy from "./Tab/Privacy";
 import i18n from "../../locales";
 
 const MODAL_MAX_WIDTH = 720;
@@ -35,7 +35,7 @@ type TabType =
   | "general"
   | "languages"
   | "advanced"
-  | "danger"
+  | "privacy"
   | "license";
 
 const SettingsModal = () => {
@@ -63,14 +63,14 @@ const SettingsModal = () => {
         icon: images.icons.mode,
       },
       {
-        label: t("settings_tab_danger", { defaultValue: "Danger Zone" }),
-        type: "danger",
-        icon: images.icons.warning,
+        label: t("settings_tab_privacy", { defaultValue: "Privacy" }),
+        type: "privacy",
+        icon: images.icons.locked,
       },
       {
-        label: t("settings_tab_license", { defaultValue: "License" }),
+        label: t("settings_tab_credits", { defaultValue: "Credits" }),
         type: "license",
-        icon: images.icons.locked,
+        icon: images.icons.partner,
       },
     ],
     [t, i18n.language]
@@ -82,7 +82,7 @@ const SettingsModal = () => {
       languages: <Languages />,
       advanced: <Advanced />,
       license: <License />,
-      danger: <DangerZone />,
+      privacy: <Privacy />,
     }),
     []
   );
@@ -207,25 +207,24 @@ const SettingsModal = () => {
                 { backgroundColor: `${theme.textPrimary}33` },
               ]}
             />
-            <Pressable style={styles.footerLink} onPress={handleGithubPress}>
-              <Icon
-                svg
-                image={images.icons.github}
-                size={sc(12)}
-                color={theme.primary}
-              />
-              <Text size={1} semibold color={theme.primary}>
-                {t("settings_credits_macos_source", {
-                  defaultValue: "macOS source",
+            <View style={styles.footerSegment}>
+              <Text size={1} color={`${theme.textPrimary}99`}>
+                {t("settings_credits_macos_port", {
+                  defaultValue: "macOS port by",
                 })}
               </Text>
-              <Icon
-                svg
-                image={images.icons.external}
-                size={sc(9)}
-                color={theme.primary}
-              />
-            </Pressable>
+              <Pressable style={styles.footerLink} onPress={handleMacPortPress}>
+                <Text size={1} semibold color={theme.primary}>
+                  Mac Andreas Team
+                </Text>
+                <Icon
+                  svg
+                  image={images.icons.external}
+                  size={sc(9)}
+                  color={theme.primary}
+                />
+              </Pressable>
+            </View>
             <View
               style={[
                 styles.footerDot,
@@ -260,31 +259,32 @@ const SettingsModal = () => {
                 { backgroundColor: `${theme.textPrimary}33` },
               ]}
             />
-            <View style={styles.footerSegment}>
-              <Text size={1} color={`${theme.textPrimary}99`}>
-                {t("settings_credits_macos_port", {
-                  defaultValue: "macOS port by",
+            <Pressable style={styles.footerLink} onPress={handleGithubPress}>
+              <Icon
+                svg
+                image={images.icons.github}
+                size={sc(12)}
+                color={theme.primary}
+              />
+              <Text size={1} semibold color={theme.primary}>
+                {t("settings_credits_macos_source", {
+                  defaultValue: "macOS source",
                 })}
               </Text>
-              <Pressable style={styles.footerLink} onPress={handleMacPortPress}>
-                <Text size={1} semibold color={theme.primary}>
-                  Xyranaut
-                </Text>
-                <Icon
-                  svg
-                  image={images.icons.external}
-                  size={sc(9)}
-                  color={theme.primary}
-                />
-              </Pressable>
-            </View>
+              <Icon
+                svg
+                image={images.icons.external}
+                size={sc(9)}
+                color={theme.primary}
+              />
+            </Pressable>
           </View>
         </View>
         <TouchableOpacity style={styles.closeButton} onPress={handleDismiss}>
           <Icon
             image={images.icons.close}
             size={sc(20)}
-            color={theme.textSecondary}
+            color={`${theme.textPrimary}99`}
           />
         </TouchableOpacity>
       </View>
@@ -313,7 +313,7 @@ const styles = StyleSheet.create({
     height: 1,
     marginTop: sc(10),
     marginHorizontal: sc(15),
-    marginBottom: sc(4),
+    marginBottom: sc(8),
   },
   footerDivider: {
     height: 1,

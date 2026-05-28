@@ -222,12 +222,77 @@ const License = () => {
   const ALLOW = "#3FB950";
   const DENY = "#E5534B";
 
+  const credits: {
+    role: string;
+    name: string;
+    url: string;
+  }[] = [
+    {
+      role: t("credits_role_openmp", { defaultValue: "open.mp developers" }),
+      name: "open.mp team",
+      url: "https://open.mp/",
+    },
+    {
+      role: t("credits_role_macos_port", { defaultValue: "macOS port" }),
+      name: "Xyranaut (Mac Andreas)",
+      url: "https://github.com/Mac-Andreas/omp-launcher-macOS",
+    },
+  ];
+
   return (
     <ScrollView
       style={{ flex: 1 }}
       contentContainerStyle={styles.container}
       showsVerticalScrollIndicator={false}
     >
+      <View
+        style={[
+          styles.creditsCard,
+          {
+            borderColor: `${theme.textPrimary}1F`,
+            backgroundColor: theme.itemBackgroundColor,
+          },
+        ]}
+      >
+        <Text
+          semibold
+          size={1}
+          color={`${theme.textPrimary}99`}
+          style={styles.creditsLabel}
+        >
+          {t("credits_section_label", { defaultValue: "CREDITS" })}
+        </Text>
+        {credits.map((c, i) => (
+          <Pressable
+            key={c.role}
+            onPress={() => shell.open(c.url)}
+            style={({ hovered }: any) => [
+              styles.creditRow,
+              i < credits.length - 1 && {
+                borderBottomWidth: 1,
+                borderBottomColor: `${theme.textPrimary}12`,
+              },
+              {
+                backgroundColor: hovered ? `${theme.textPrimary}08` : "transparent",
+              },
+            ]}
+          >
+            <Text size={1} color={`${theme.textPrimary}99`} style={styles.creditRole}>
+              {c.role}
+            </Text>
+            <Text size={2} semibold color={theme.textPrimary} style={styles.creditName}>
+              {c.name}
+            </Text>
+            <Icon
+              svg
+              image={images.icons.external}
+              size={sc(10)}
+              color={theme.primary}
+            />
+          </Pressable>
+        ))}
+      </View>
+
       <View
         style={[
           styles.acceptedBanner,
@@ -357,12 +422,38 @@ const License = () => {
 const styles = StyleSheet.create({
   container: {
     paddingHorizontal: sc(14),
-    paddingVertical: sc(12),
+    paddingTop: sc(16),
+    paddingBottom: sc(12),
     gap: sc(8),
   },
   intro: {
     lineHeight: sc(16),
     marginBottom: sc(2),
+  },
+  creditsCard: {
+    borderWidth: 1,
+    borderRadius: sc(8),
+    paddingHorizontal: sc(12),
+    paddingTop: sc(10),
+    paddingBottom: sc(2),
+  },
+  creditsLabel: {
+    letterSpacing: 1,
+    marginBottom: sc(4),
+  },
+  creditRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: sc(8),
+    paddingVertical: sc(9),
+    // @ts-ignore
+    cursor: "pointer",
+  },
+  creditRole: {
+    width: sc(120),
+  },
+  creditName: {
+    flex: 1,
   },
   acceptedBanner: {
     flexDirection: "row",

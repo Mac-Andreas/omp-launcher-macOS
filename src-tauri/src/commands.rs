@@ -8,6 +8,7 @@ use std::path::Path;
 
 #[tauri::command]
 pub async fn inject(
+    app_handle: tauri::AppHandle,
     name: &str,
     ip: &str,
     port: i32,
@@ -16,12 +17,24 @@ pub async fn inject(
     omp_file: &str,
     password: &str,
     custom_game_exe: &str,
+    debug: bool,
+    debug_detailed: bool,
+    audio_fix: bool,
 ) -> std::result::Result<(), String> {
     let actual_omp_file = if *crate::NO_OMP_FLAG.lock().unwrap() {
         ""
     } else {
         omp_file
     };
+
+    #[cfg(not(target_os = "windows"))]
+    let injector_path = app_handle
+        .path_resolver()
+        .app_local_data_dir()
+        .map(|d| d.join("injector.exe"));
+
+    #[cfg(target_os = "windows")]
+    let injector_path: Option<std::path::PathBuf> = None;
 
     match injector::run_samp(
         name,
@@ -32,6 +45,10 @@ pub async fn inject(
         actual_omp_file,
         password,
         custom_game_exe,
+        injector_path.as_deref(),
+        debug,
+        debug_detailed,
+        audio_fix,
     )
     .await
     {
@@ -295,14 +312,14 @@ pub async fn prepare_macos_samp_files(
 /// Remove every launcher-placed SA-MP/open.mp file from the game folder and
 /// restore it to plain GTA: San Andreas. `files` is the list of game-dir
 /// relative paths the frontend installed (samp.dll, omp-client.dll, the
-/// shared SA-MP files, ...). The vorbisFile.dll proxy is reverted by deleting
-/// it and renaming the preserved real DLL (vorbisFile_o.dll) back into place.
+/// shared SA-MP files, ...).
 #[cfg(not(target_os = "windows"))]
 #[tauri::command]
 pub async fn uninstall_macos_samp_files(
     gtasa_dir: String,
     files: Vec<String>,
 ) -> std::result::Result<(), String> {
+    use crate::constants::OMP_WINE_INJECTOR_EXE;
     use std::path::PathBuf;
 
     let game_dir = PathBuf::from(&gtasa_dir);
@@ -310,7 +327,6 @@ pub async fn uninstall_macos_samp_files(
         return Err(format!("game_not_found: {}", gtasa_dir));
     }
 
-    // Delete each installed file. A missing file is fine — already gone.
     for rel in &files {
         let p = game_dir.join(rel);
         if p.is_file() {
@@ -321,44 +337,35 @@ pub async fn uninstall_macos_samp_files(
         }
     }
 
-    // Restore the real audio DLL: drop the proxy, rename vorbisFile_o.dll back.
-    let vf = game_dir.join("vorbisFile.dll");
-    let vf_o = game_dir.join("vorbisFile_o.dll");
-    if vf_o.is_file() {
-        if vf.is_file() {
-            let _ = std::fs::remove_file(&vf);
+    let _ = std::fs::remove_file(game_dir.join(OMP_WINE_INJECTOR_EXE));
+
+    // If debug mode left the vorbisFile.dll proxy in place, restore the genuine
+    // DLL so the folder is fully reverted.
+    let real = game_dir.join("vorbisFile.dll");
+    let backup = game_dir.join("vorbisFile_o.dll");
+    if backup.is_file() {
+        let _ = std::fs::remove_file(&real);
+        if std::fs::rename(&backup, &real).is_ok() {
+            info!("[uninstall] restored genuine vorbisFile.dll");
         }
-        std::fs::rename(&vf_o, &vf)
-            .map_err(|e| format!("Failed to restore vorbisFile.dll: {}", e))?;
-        info!("[uninstall] restored real vorbisFile.dll");
     }
 
-    // Drop the SA-MP asset folder and the proxy's load log if present.
-    let samp_dir = game_dir.join("SAMP");
-    if samp_dir.is_dir() {
-        let _ = std::fs::remove_dir_all(&samp_dir);
-    }
-    let _ = std::fs::remove_file(game_dir.join("omp-loader.log"));
-
-    // Drop the SA-MP client registry key. The HKCU\Software\Wine\DirectSound
-    // audio tweak run_samp applies is deliberately NOT reverted: it stops
-    // plain GTA: San Andreas itself from crashing on Wine/macOS (the CoreAudio
-    // assertion ~17s in), so it must persist whether SA-MP is installed or not.
+    // Revert the SA-MP client registry key the launcher added before launch.
     // Best effort: a missing CrossOver / bottle must not fail the uninstall.
     revert_samp_registry(&game_dir);
 
     Ok(())
 }
 
-/// Delete the SA-MP / open.mp cache + log files the client writes into the
-/// game's "User Files" directory (~/Documents/GTA San Andreas User Files):
-/// the open.mp config (omp.cfg), the SAMP/ chat-log + settings folder, and any
-/// omp/ data folder. GTA save games, screenshots and unrelated files are left
-/// untouched.
+/// Delete SA-MP / open.mp files from the GTA:SA User Files directory:
+/// omp.cfg, samp.log, chatlog.txt, SAMP/ and omp/ folders.
+/// Also wipes <game_dir>/omp-logs/ (debug mode artifacts) when provided.
+/// GTA:SA save files and other unrelated files are not touched.
 #[cfg(not(target_os = "windows"))]
 #[tauri::command]
 pub async fn clear_samp_user_cache(
     user_files_dir: String,
+    game_dir: Option<String>,
 ) -> std::result::Result<(), String> {
     use std::path::PathBuf;
 
@@ -367,7 +374,6 @@ pub async fn clear_samp_user_cache(
         return Err(format!("user_files_not_found: {}", user_files_dir));
     }
 
-    // Loose files to drop (best effort — a missing entry is already clean).
     for f in ["omp.cfg", "samp.log", "chatlog.txt"] {
         let p = dir.join(f);
         if p.is_file() {
@@ -378,8 +384,6 @@ pub async fn clear_samp_user_cache(
         }
     }
 
-    // Folders the SA-MP / open.mp client creates (chat logs, saved positions,
-    // client settings). Save games live elsewhere in this dir and are kept.
     for d in ["SAMP", "omp"] {
         let p = dir.join(d);
         if p.is_dir() {
@@ -390,6 +394,16 @@ pub async fn clear_samp_user_cache(
         }
     }
 
+    if let Some(gd) = game_dir {
+        let logs = PathBuf::from(&gd).join("omp-logs");
+        if logs.is_dir() {
+            if let Err(e) = std::fs::remove_dir_all(&logs) {
+                return Err(format!("Failed to remove {}: {}", logs.display(), e));
+            }
+            info!("[cache] removed dir {}", logs.display());
+        }
+    }
+
     Ok(())
 }
 
@@ -397,6 +411,7 @@ pub async fn clear_samp_user_cache(
 #[tauri::command]
 pub async fn clear_samp_user_cache(
     _user_files_dir: String,
+    _game_dir: Option<String>,
 ) -> std::result::Result<(), String> {
     Ok(())
 }
@@ -412,8 +427,6 @@ fn revert_samp_registry(game_dir: &Path) {
         return;
     }
 
-    // The Wine prefix is the nearest ancestor that contains a drive_c; the
-    // bottle name is that directory's file name.
     let mut cur = game_dir;
     let bottle = loop {
         match cur.parent() {
@@ -516,6 +529,21 @@ pub async fn copy_files_to_gtasa(
         }
     }
 }
+
+/// Probe ~/Documents to trigger the macOS TCC permission dialog at startup,
+/// before the game launcher needs it (clear_samp_user_cache accesses that dir).
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+pub fn request_documents_access() {
+    if let Ok(home) = std::env::var("HOME") {
+        let docs = std::path::Path::new(&home).join("Documents");
+        let _ = std::fs::read_dir(&docs);
+    }
+}
+
+#[cfg(target_os = "windows")]
+#[tauri::command]
+pub fn request_documents_access() {}
 
 #[tauri::command]
 pub fn log_info(msg: &str) -> () {

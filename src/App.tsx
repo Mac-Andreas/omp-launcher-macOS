@@ -41,8 +41,14 @@ import {
 import PerformanceMonitor from "./utils/performance";
 import { PING_TIMEOUT_VALUE } from "./utils/query";
 import { sc } from "./utils/sizeScaler";
+import {
+  sendTelemetry,
+  telemetrySessionStart,
+  telemetrySessionEnd,
+  startHeartbeat,
+  stopHeartbeat,
+} from "./utils/telemetry";
 
-// Lazy load heavy components for better initial load time
 const MainView = lazy(() => import("./containers/MainBody"));
 const NavBar = lazy(() => import("./containers/NavBar"));
 const AddThirdPartyServerModal = lazy(
@@ -85,7 +91,7 @@ const App = memo(() => {
       } finally {
         endTimer();
       }
-    }, 100), // Increased throttle delay for better performance
+    }, 100),
     []
   );
 
@@ -113,10 +119,6 @@ const App = memo(() => {
         invoke("set_traffic_lights", { visible: false }),
       ]);
 
-      // Reset favorite server list outdated cached data (matches upstream
-      // fork — favorites get re-queried via fetchServers' batched calls
-      // below, this just clears stale info so we don't display obsolete
-      // values while the live query lands).
       const { favorites, updateInFavoritesList } =
         usePersistentServers.getState();
       if (Array.isArray(favorites) && favorites.length > 0) {
@@ -130,9 +132,7 @@ const App = memo(() => {
         });
       }
 
-      // Run independent operations in parallel
       await Promise.all([
-        // Start these operations without waiting
         fetchServers(),
         fetchUpdateInfo(),
         generateLanguageFilters(),
@@ -146,6 +146,18 @@ const App = memo(() => {
     changeLanguage(language as any);
   }, [language]);
 
+  // Anonymous launch ping + session tracking (respects Privacy opt-out).
+  useEffect(() => {
+    if (IN_GAME) return;
+    sendTelemetry("app_launched");
+    telemetrySessionStart("server_list");
+    startHeartbeat();
+    return () => {
+      stopHeartbeat();
+      telemetrySessionEnd();
+    };
+  }, []);
+
   useEffect(() => {
     if (!loading) {
       const targetSize = mainWindowSize.current || new LogicalSize(1000, 700);
@@ -158,8 +170,6 @@ const App = memo(() => {
         await appWindow.setResizable(true);
         await appWindow.setSize(targetSize);
         if (!IN_GAME) {
-          // Splash is over — reveal the native macOS traffic lights that
-          // were hidden in the Rust setup step.
           await invoke("set_traffic_lights", { visible: true });
           await appWindow.center();
           requestAnimationFrame(() => {
@@ -182,10 +192,6 @@ const App = memo(() => {
         gtasaPath,
       } = useSettings.getState();
 
-      // First-run prompt only. If the user already picked a CrossOver
-      // bottle or linked the game folder, they configured the setup
-      // themselves — don't nag. Settings > "Reinstall SA-MP files in
-      // bottle" stays available for them to run it on demand.
       if (
         sampSetupPromptShown ||
         bottleName ||
@@ -249,7 +255,6 @@ const App = memo(() => {
     let killResizeListener: (() => void) | null = null;
 
     const setupListeners = async () => {
-      // Optimize context menu handler
       if (!DEBUG_MODE) {
         const handleContextMenu = (event: Event) => {
           event.preventDefault();
@@ -277,7 +282,7 @@ const App = memo(() => {
           } catch (error) {
             console.error("Game process check failed:", error);
           }
-        }, 1000); // Reduced frequency for better performance
+        }, 1000);
       }
     };
 

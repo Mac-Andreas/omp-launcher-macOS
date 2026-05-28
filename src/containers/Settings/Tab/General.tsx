@@ -16,10 +16,13 @@ import { useAppState } from "../../../states/app";
 import { useGameLaunch } from "../../../states/gameLaunch";
 import { useMessageBox } from "../../../states/messageModal";
 import { useSettings } from "../../../states/settings";
+import { ThemeColors } from "../../../constants/theme";
 import { useTheme } from "../../../states/theme";
 import {
+  clearSampUserCache,
   detectInstalledSampVersion,
   prepareSelectedBottleSampFiles,
+  uninstallSelectedBottleSampFiles,
 } from "../../../utils/game";
 import {
   getSampVersionFromName,
@@ -30,6 +33,7 @@ import {
   LATEST_SAMP_VERSION,
 } from "../../../utils/sampVersionMeta";
 import { sc } from "../../../utils/sizeScaler";
+import { stateStorage } from "../../../utils/stateStorage";
 import { SAMPDLLVersions } from "../../../utils/types";
 
 type DetectedVersion = Awaited<ReturnType<typeof detectInstalledSampVersion>>;
@@ -42,16 +46,15 @@ interface MacosHealth {
   bottle: string;
 }
 
-// CrossOver is the Windows compatibility layer GTA: SA runs inside. When it's
-// missing there's nothing the launcher can do but point the user at the
-// vendor's download page.
 const CROSSOVER_URL = "https://www.codeweavers.com/crossover";
 const DONE_DISPLAY_MS = 3000;
 
+// Toned-down solid action colours (the neon #3FB950 / #E5534B read too bright).
+const ACTION_GREEN = "#3C9A54";
+const ACTION_RED = "#C24B43";
+
 const parseArmVersion = (v: string): number[] | null => {
-  // Accepts plain "1.6.3", stable arm "1.6.3-arm.N", and pre-release
-  // "1.6.3-arm-beta.N". Channel orders releases so beta < arm < plain, i.e. a
-  // beta tag never out-ranks the matching stable arm tag.
+  // beta < arm < plain stable, so a beta tag never out-ranks the matching stable arm tag
   const m = v.match(/^v?(\d+)\.(\d+)\.(\d+)(?:-arm(-beta)?\.(\d+))?$/);
   if (!m) return null;
   const channel = m[5] === undefined ? 2 : m[4] ? 0 : 1;
@@ -66,6 +69,44 @@ const isNewer = (remote: string, local: string): boolean => {
     if (r[i] < l[i]) return false;
   }
   return false;
+};
+
+const BetaInfoButton = ({ theme }: { theme: ThemeColors }) => {
+  const [visible, setVisible] = useState(false);
+  return (
+    <div
+      style={{ position: "relative", display: "flex", alignItems: "center" }}
+      // @ts-ignore
+      onMouseEnter={() => setVisible(true)}
+      onMouseLeave={() => setVisible(false)}
+    >
+      <View style={styles.betaInfoBtn}>
+        <Text size={1} color="#FF9800" semibold>?</Text>
+      </View>
+      {visible && (
+        <div
+          style={{
+            position: "absolute",
+            bottom: sc(24),
+            right: 0,
+            borderRadius: sc(6),
+            border: `1px solid ${theme.textPrimary}22`,
+            backgroundColor: theme.itemBackgroundColor,
+            padding: `${sc(6)}px ${sc(10)}px`,
+            zIndex: 9999,
+            width: sc(230),
+            pointerEvents: "none",
+            whiteSpace: "normal" as const,
+            lineHeight: "1.4",
+          }}
+        >
+          <Text size={1} color={theme.textPrimary}>
+            Beta builds may contain bugs or incomplete features.
+          </Text>
+        </div>
+      )}
+    </div>
+  );
 };
 
 const Overview = () => {
@@ -85,6 +126,8 @@ const Overview = () => {
   );
   const [busy, setBusy] = useState(false);
   const [justDone, setJustDone] = useState(false);
+  const [uninstalling, setUninstalling] = useState(false);
+  const [clearingCache, setClearingCache] = useState(false);
   const doneTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const refresh = useCallback(() => {
@@ -109,10 +152,6 @@ const Overview = () => {
 
   useEffect(() => refresh(), [refresh]);
 
-  // Replace the "From GTASA Folder" (sampVersion === "custom") placeholder
-  // with a real pick so the dropdown never shows it: mirror the detected
-  // version when one's installed, otherwise default to the latest release the
-  // launcher can install.
   useEffect(() => {
     if (sampVersion !== "custom") return;
     if (
@@ -160,13 +199,10 @@ const Overview = () => {
     updateInfo &&
     updateInfo.version &&
     isNewer(updateInfo.version, nativeAppVersion);
-  // Split the native app version into its base (e.g. "1.6.3") and the arm
-  // channel build (e.g. "arm-beta.1" or "arm.2"). Matches both the stable
-  // "-arm.N" tags and the pre-release "-arm-beta.N" tags.
   const armMatch = nativeAppVersion.match(/^(.+?)-(arm(?:-beta)?\.\d+)$/);
   const macosVersion = armMatch ? armMatch[1] : nativeAppVersion;
-  // Upstream version = latest openmultiplayer/launcher GitHub release tag
-  // (e.g. "v1.6.1"), fetched in fetchUpdateInfo.
+  const armBuildTag = armMatch ? armMatch[2] : null;
+  const isBetaBuild = !!armBuildTag && armBuildTag.includes("beta");
   const upstreamVersion = upstreamLauncherVersion || "—";
 
   const openBottleInFinder = async () => {
@@ -202,7 +238,7 @@ const Overview = () => {
       await prepareSelectedBottleSampFiles(gamePath);
       // Don't flip to "Installed" the instant the copy returns — keep the
       // spinner until the samp.dll is actually detectable on disk. Poll a few
-      // times (the proxy/loader can lag a moment) before trusting it.
+      // times (fs writes can lag a moment) before trusting it.
       let v: DetectedVersion = "none";
       for (let i = 0; i < 12 && v === "none"; i++) {
         try {
@@ -246,6 +282,98 @@ const Overview = () => {
     }
   };
 
+  const handleUninstall = () => {
+    if (!gamePath || uninstalling) return;
+    showMessageBox({
+      title: t("settings_danger_uninstall_confirm_title", {
+        defaultValue: "Uninstall SA-MP?",
+      }),
+      description: t("settings_danger_uninstall_confirm_desc", {
+        defaultValue:
+          "Removes the SA-MP client files this launcher added and reverts changes to the game folder.",
+      }),
+      boxWidth: 420,
+      buttons: [
+        {
+          title: t("settings_uninstall_confirm_btn", { defaultValue: "Uninstall" }),
+          onPress: async () => {
+            try {
+              setUninstalling(true);
+              await uninstallSelectedBottleSampFiles(gamePath);
+            } catch (error) {
+              showMessageBox({
+                title: t("samp_uninstall_failed_title"),
+                description: String(error),
+                boxWidth: 420,
+                buttons: [{ title: t("close"), onPress: () => {} }],
+              });
+            } finally {
+              setUninstalling(false);
+              refresh();
+            }
+          },
+        },
+        { title: t("cancel"), onPress: () => {} },
+      ],
+    });
+  };
+
+  const handleClearCache = async () => {
+    if (clearingCache) return;
+    try {
+      setClearingCache(true);
+      await clearSampUserCache();
+      showMessageBox({
+        title: t("settings_danger_cache_done_title", {
+          defaultValue: "Cache cleared",
+        }),
+        description: t("settings_danger_cache_done_desc", {
+          defaultValue:
+            "SA-MP / open.mp config, chat logs, client settings and debug logs were removed.",
+        }),
+        boxWidth: 420,
+        buttons: [{ title: t("close"), onPress: () => {} }],
+      });
+    } catch (error) {
+      showMessageBox({
+        title: t("settings_danger_cache_failed_title", {
+          defaultValue: "Could not clear cache",
+        }),
+        description: String(error),
+        boxWidth: 420,
+        buttons: [{ title: t("close"), onPress: () => {} }],
+      });
+    } finally {
+      setClearingCache(false);
+    }
+  };
+
+  const handleReset = () => {
+    showMessageBox({
+      title: t("settings_danger_reset_confirm_title", {
+        defaultValue: "Reset launcher?",
+      }),
+      description: t("settings_danger_reset_help_short", {
+        defaultValue:
+          "Wipes nickname, bottle, favorites and per-server overrides, then reloads.",
+      }),
+      boxWidth: 420,
+      buttons: [
+        {
+          title: t("settings_danger_reset_confirm_btn", {
+            defaultValue: "Reset",
+          }),
+          onPress: () => {
+            stateStorage.clear();
+            localStorage.clear();
+            window.location.reload();
+          },
+        },
+        { title: t("cancel"), onPress: () => {} },
+      ],
+    });
+  };
+
   const detectedLabel =
     sampDetected === undefined
       ? "…"
@@ -266,32 +394,10 @@ const Overview = () => {
 
   const renderSampAction = () => {
     const running = busy || sampInstalling;
-    // Grey when the current selection is already on disk — nothing to do.
-    // Green for both Install (clean slot) and Reinstall (different version
-    // picked), so the button is unmistakeably the call to action.
-    const blocked =
-      !gamePath || running || justDone || selectedMatchesInstalled;
-    const label = installed
-      ? t("settings_reinstall_samp_files", { defaultValue: "Reinstall" })
-      : t("settings_install_samp_files", { defaultValue: "Install" });
-    const bg = !gamePath
-      ? "#666666"
-      : selectedMatchesInstalled
-      ? "#4A4A4F"
-      : "#3FB950";
-    return (
-      <TouchableOpacity
-        disabled={blocked}
-        onPress={installSamp}
-        style={[
-          styles.sampButton,
-          {
-            backgroundColor: bg,
-            opacity: !gamePath ? 0.65 : 1,
-          },
-        ]}
-      >
-        {running ? (
+
+    if (running) {
+      return (
+        <View style={[styles.sampButton, { backgroundColor: ACTION_GREEN }]}>
           <View style={styles.btnRow}>
             <ActivityIndicator size="small" color="#FFFFFF" />
             <Text semibold color="#FFFFFF" size={1}>
@@ -300,19 +406,62 @@ const Overview = () => {
               })}
             </Text>
           </View>
-        ) : (
+        </View>
+      );
+    }
+
+    if (justDone) {
+      return (
+        <View style={[styles.sampButton, { backgroundColor: "#4A4A4F" }]}>
           <Text semibold color="#FFFFFF" size={1}>
-            {selectedMatchesInstalled
-              ? t("settings_samp_already_installed", {
-                  defaultValue: "Installed",
-                })
-              : justDone
-              ? `✓  ${t("settings_samp_installed_done", {
-                  defaultValue: "Done",
-                })}`
-              : label}
+            {`✓  ${t("settings_samp_installed_done", { defaultValue: "Done" })}`}
           </Text>
-        )}
+        </View>
+      );
+    }
+
+    // The picked version is already on disk → the slot becomes Uninstall
+    // (no redundant disabled "Installed" button).
+    if (selectedMatchesInstalled) {
+      return (
+        <TouchableOpacity
+          disabled={uninstalling}
+          onPress={handleUninstall}
+          style={[styles.sampButton, { backgroundColor: ACTION_RED }]}
+        >
+          {uninstalling ? (
+            <View style={styles.btnRow}>
+              <ActivityIndicator size="small" color="#FFFFFF" />
+              <Text semibold color="#FFFFFF" size={1}>
+                {t("settings_danger_uninstalling", {
+                  defaultValue: "Uninstalling…",
+                })}
+              </Text>
+            </View>
+          ) : (
+            <Text semibold color="#FFFFFF" size={1}>
+              {t("settings_uninstall_samp_files", { defaultValue: "Uninstall" })}
+            </Text>
+          )}
+        </TouchableOpacity>
+      );
+    }
+
+    // Clean slot → Install; different version picked → Reinstall.
+    return (
+      <TouchableOpacity
+        disabled={!gamePath}
+        onPress={installSamp}
+        style={[
+          styles.sampButton,
+          { backgroundColor: !gamePath ? "#666666" : ACTION_GREEN, opacity: !gamePath ? 0.65 : 1 },
+        ]}
+      >
+        <Text semibold color="#FFFFFF" size={1}>
+          {installed
+            ? t("settings_reinstall_samp_files", { defaultValue: "Reinstall" })
+            : t("settings_install_samp_files", { defaultValue: "Install" })}
+        </Text>
       </TouchableOpacity>
     );
   };
@@ -552,7 +701,7 @@ const Overview = () => {
                 {t("settings_status_samp", { defaultValue: "SA-MP" })}
               </Text>
             </View>
-            {installed && (
+            {installed ? (
               <View
                 style={[
                   styles.pill,
@@ -566,20 +715,31 @@ const Overview = () => {
                   })}
                 </Text>
               </View>
-            )}
+            ) : sampDetected !== undefined ? (
+              <View
+                style={[
+                  styles.pill,
+                  { backgroundColor: "#E8912B1F", borderColor: "#E8912B66" },
+                ]}
+              >
+                <Text size={1} semibold color="#E8912B">
+                  {t("settings_status_samp_not_found", {
+                    defaultValue: "Not found",
+                  })}
+                </Text>
+              </View>
+            ) : null}
           </View>
-          {!installed && (
+          {!installed && !gamePath && (
             <Text
               size={1}
               color={`${theme.textPrimary}88`}
               numberOfLines={2}
               style={styles.tileSub}
             >
-              {!gamePath
-                ? t("settings_samp_need_bottle", {
-                    defaultValue: "Link a bottle with GTA: SA first.",
-                  })
-                : detectedLabel}
+              {t("settings_samp_need_bottle", {
+                defaultValue: "Link a bottle with GTA: SA first.",
+              })}
             </Text>
           )}
           {gamePath && (
@@ -599,9 +759,75 @@ const Overview = () => {
                   maxVisibleItems={7}
                 />
               </View>
+              {installed && (
+                <TouchableOpacity
+                  disabled={clearingCache}
+                  onPress={handleClearCache}
+                  style={[
+                    styles.sampButton,
+                    styles.sampSecondary,
+                    {
+                      borderColor: `${theme.textPrimary}22`,
+                      backgroundColor: `${theme.textPrimary}0A`,
+                    },
+                  ]}
+                >
+                  <Text size={1} semibold color={`${theme.textPrimary}CC`}>
+                    {clearingCache
+                      ? t("settings_danger_clearing_cache", {
+                          defaultValue: "Clearing…",
+                        })
+                      : t("settings_danger_clear_cache_btn", {
+                          defaultValue: "Clear cache",
+                        })}
+                  </Text>
+                </TouchableOpacity>
+              )}
               {renderSampAction()}
             </View>
           )}
+        </View>
+
+        {/* ── open.mp Launcher (reset) ────────────────────────────── */}
+        <View
+          style={[
+            styles.tile,
+            {
+              borderColor: `${theme.textPrimary}14`,
+              backgroundColor: theme.itemBackgroundColor,
+            },
+          ]}
+        >
+          <View style={styles.tileHead}>
+            <View style={styles.tileHeadLeft}>
+              <Text semibold size={2} color={theme.textPrimary}>
+                {t("settings_reset_launcher_title", {
+                  defaultValue: "open.mp Launcher",
+                })}
+              </Text>
+            </View>
+            <TouchableOpacity
+              onPress={handleReset}
+              style={[styles.solidDangerButton, { backgroundColor: ACTION_RED }]}
+            >
+              <Text size={1} semibold color="#FFFFFF">
+                {t("settings_danger_reset_short", {
+                  defaultValue: "Reset launcher data",
+                })}
+              </Text>
+            </TouchableOpacity>
+          </View>
+          <Text
+            size={1}
+            color={`${theme.textPrimary}88`}
+            numberOfLines={2}
+            style={styles.tileSub}
+          >
+            {t("settings_danger_reset_help_short", {
+              defaultValue:
+                "Wipes nickname, bottle, favorites and per-server overrides, then reloads.",
+            })}
+          </Text>
         </View>
       </View>
 
@@ -675,6 +901,33 @@ const Overview = () => {
                 v{macosVersion}
               </Text>
             </View>
+            {armBuildTag && (
+              <View style={styles.betaPillRow}>
+                <View
+                  style={[
+                    styles.aboutPill,
+                    isBetaBuild
+                      ? {
+                          backgroundColor: "#FF980020",
+                          borderColor: "#FF980066",
+                        }
+                      : {
+                          backgroundColor: `${theme.textPrimary}10`,
+                          borderColor: `${theme.textPrimary}22`,
+                        },
+                  ]}
+                >
+                  <Text
+                    size={1}
+                    semibold
+                    color={isBetaBuild ? "#FF9800" : theme.textPrimary}
+                  >
+                    {armBuildTag}
+                  </Text>
+                </View>
+                {isBetaBuild && <BetaInfoButton theme={theme} />}
+              </View>
+            )}
           </View>
         </View>
         <View style={styles.aboutCell}>
@@ -718,6 +971,7 @@ const Overview = () => {
           </View>
         </View>
       </View>
+
     </ScrollView>
   );
 };
@@ -794,6 +1048,18 @@ const styles = StyleSheet.create({
   tileBottomDropdown: {
     flex: 1,
     minWidth: 0,
+  },
+  sampSecondary: {
+    borderWidth: 1,
+  },
+  solidDangerButton: {
+    height: sc(30),
+    paddingHorizontal: sc(12),
+    borderRadius: sc(7),
+    justifyContent: "center",
+    alignItems: "center",
+    // @ts-ignore
+    cursor: "pointer",
   },
   tileHeadRight: {
     flexDirection: "row",
@@ -891,6 +1157,23 @@ const styles = StyleSheet.create({
     borderRadius: sc(999),
     borderWidth: 1,
     alignSelf: "flex-start",
+  },
+  betaPillRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: sc(4),
+  },
+  betaInfoBtn: {
+    width: sc(16),
+    height: sc(16),
+    borderRadius: sc(8),
+    borderWidth: 1,
+    borderColor: "#FF980066",
+    backgroundColor: "#FF980020",
+    alignItems: "center",
+    justifyContent: "center",
+    // @ts-ignore
+    cursor: "default",
   },
 });
 

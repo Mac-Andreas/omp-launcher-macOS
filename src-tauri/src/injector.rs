@@ -24,11 +24,10 @@ pub fn prepare_client_files(
     game_dir: &Path,
     dll_path: &str,
     omp_file: &str,
-    strict_proxy: bool,
+    _strict: bool,
 ) -> Result<()> {
     place_client_file(game_dir, dll_path, SAMP_DLL)?;
-    place_client_file(game_dir, omp_file, OMP_CLIENT_DLL)?;
-    install_vorbis_proxy(game_dir, strict_proxy)
+    place_client_file(game_dir, omp_file, OMP_CLIENT_DLL)
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -65,48 +64,155 @@ fn place_client_file(game_dir: &Path, src: &str, dst_name: &str) -> Result<()> {
 }
 
 #[cfg(not(target_os = "windows"))]
-fn install_vorbis_proxy(game_dir: &Path, strict: bool) -> Result<()> {
-    const PROXY: &[u8] = include_bytes!("vorbisFile_loader.dll");
-    let vf = game_dir.join("vorbisFile.dll");
-    let vf_o = game_dir.join("vorbisFile_o.dll");
-    let proxy_installed = vf
-        .metadata()
-        .map(|m| m.len() as usize == PROXY.len())
-        .unwrap_or(false);
+fn stage_injector(game_dir: &Path, downloaded: Option<&Path>) -> Result<PathBuf> {
+    const BUNDLED: &[u8] = include_bytes!("../../tools/injector.exe");
+    let dest = game_dir.join(OMP_WINE_INJECTOR_EXE);
 
-    if !vf_o.is_file() && vf.is_file() && !proxy_installed {
-        // Preserve the real audio DLL exactly once.
-        std::fs::rename(&vf, &vf_o).map_err(|e| {
-            LauncherError::Process(format!(
-                "Could not preserve real vorbisFile.dll: {}",
-                e
-            ))
+    // Prefer the version downloaded at runtime (newer), fall back to bundled.
+    let bytes: std::borrow::Cow<[u8]> = match downloaded {
+        Some(p) if p.is_file() => {
+            std::fs::read(p)
+                .map(std::borrow::Cow::Owned)
+                .unwrap_or(std::borrow::Cow::Borrowed(BUNDLED))
+        }
+        _ => std::borrow::Cow::Borrowed(BUNDLED),
+    };
+
+    std::fs::write(&dest, bytes.as_ref()).map_err(|e| {
+        LauncherError::Process(format!("Failed to stage injector.exe: {}", e))
+    })?;
+    info!("[run_samp] staged injector at {}", dest.display());
+    Ok(dest)
+}
+
+// Debug-mode injection uses a vorbisFile.dll proxy instead of the external
+// injector. gta-sa.exe imports vorbisFile.dll, so Wine loads the proxy at
+// process start; the proxy then LoadLibrary's samp.dll + omp-client.dll. The
+// upshot is that gta-sa.exe is the *direct* child of cxstart, so its stdout /
+// stderr (and any Wine unhandled-exception backtrace) stay wired to our log
+// for the whole session — the external injector exits right after injecting,
+// severing that pipe and hiding every in-game crash.
+#[cfg(not(target_os = "windows"))]
+const VORBIS_PROXY: &[u8] = include_bytes!("../../tools/samp-loader/vorbisFile.dll");
+#[cfg(not(target_os = "windows"))]
+const VORBIS_REAL: &str = "vorbisFile.dll";
+#[cfg(not(target_os = "windows"))]
+const VORBIS_BACKUP: &str = "vorbisFile_o.dll";
+
+#[cfg(not(target_os = "windows"))]
+fn stage_vorbis_proxy(game_dir: &Path) -> Result<()> {
+    let real = game_dir.join(VORBIS_REAL);
+    let backup = game_dir.join(VORBIS_BACKUP);
+    // Back up the genuine DLL exactly once. If the backup already exists the
+    // proxy is (or was) installed, so the current vorbisFile.dll may itself be
+    // the proxy — never overwrite the genuine backup with it.
+    if !backup.exists() && real.is_file() {
+        std::fs::rename(&real, &backup).map_err(|e| {
+            LauncherError::Process(format!("Failed to back up vorbisFile.dll: {}", e))
         })?;
     }
+    std::fs::write(&real, VORBIS_PROXY).map_err(|e| {
+        LauncherError::Process(format!("Failed to stage vorbis proxy: {}", e))
+    })?;
+    info!("[run_samp] staged vorbis proxy (debug injection)");
+    Ok(())
+}
 
-    if vf_o.is_file() {
-        std::fs::write(&vf, PROXY).map_err(|e| {
-            LauncherError::Process(format!("Failed to install vorbisFile.dll proxy: {}", e))
-        })?;
-        info!("[run_samp] installed vorbisFile.dll open.mp/SA-MP loader proxy");
-        return Ok(());
-    }
-
-    let message = "no real vorbisFile_o.dll; cannot install loader proxy";
-    if strict {
-        Err(LauncherError::NotFound(message.to_string()))
-    } else {
-        info!("[run_samp] {}; skipping proxy (single player only)", message);
-        Ok(())
+// Undo stage_vorbis_proxy: put the genuine vorbisFile.dll back. Called on every
+// non-debug launch so a left-over proxy can't double-inject alongside the
+// external injector (which would crash the game on start).
+#[cfg(not(target_os = "windows"))]
+fn restore_vorbis_proxy(game_dir: &Path) {
+    let real = game_dir.join(VORBIS_REAL);
+    let backup = game_dir.join(VORBIS_BACKUP);
+    if backup.is_file() {
+        let _ = std::fs::remove_file(&real);
+        if std::fs::rename(&backup, &real).is_ok() {
+            info!("[run_samp] restored genuine vorbisFile.dll (debug off)");
+        }
     }
 }
 
+// WINEDEBUG channels for the two debug-log levels (passed to cxstart
+// --debugmsg). STANDARD is error class only: it keeps real failures like
+// `err:msvcrt:_wassert` (the mmdevapi audio abort) and `err:seh` unhandled
+// exceptions while turning off trace/warn/fixme. That matters because the
+// open.mp client floods trace:unwind / trace:seh (~350k lines, tens of MB) with
+// C++ exceptions during normal play. A genuine unhandled crash still prints its
+// module-named backtrace — Wine dumps that unconditionally, regardless of
+// WINEDEBUG. DETAILED turns those traces back on plus module/dll/process
+// tracking: large files and a slower game, but a full trail of everything.
 #[cfg(not(target_os = "windows"))]
-// macOS/Linux: the game is a Windows binary inside a CrossOver/Wine bottle,
-// so runtime DLL injection is not possible. The proxy load-vector DLL
-// (version.dll / vorbisFile.dll) already in the game folder loads the
-// client DLLs from disk, so we copy the chosen samp.dll / omp-client.dll
-// next to the exe and then launch the game through CrossOver.
+const STANDARD_WINE_CHANNELS: &str = "err+all,fixme-all,warn-all,trace-all";
+#[cfg(not(target_os = "windows"))]
+const DETAILED_WINE_CHANNELS: &str = "+seh,+module,+loaddll,+process,err+all,fixme+all";
+
+// Create <game>/omp-logs/session_<YYYY-MM-DD_HH-MM-SS>.log, write a header, and
+// return its path (the file is closed so cxstart can append wine's stderr to it
+// via --cx-log without fighting us for the handle).
+#[cfg(not(target_os = "windows"))]
+fn start_session_log(game_dir: &Path, header: &[(&str, String)]) -> Option<PathBuf> {
+    use std::io::Write;
+    let dir = game_dir.join("omp-logs");
+    std::fs::create_dir_all(&dir).ok()?;
+    let now = chrono::Local::now();
+    let path = dir.join(format!("session_{}.log", now.format("%Y-%m-%d_%H-%M-%S")));
+    let mut f = std::fs::File::create(&path).ok()?;
+    let _ = writeln!(f, "================ open.mp launcher session ================");
+    let _ = writeln!(f, "started : {}", now.format("%Y-%m-%d %H:%M:%S%.3f %z"));
+    for (k, v) in header {
+        let _ = writeln!(f, "{k:<9}: {v}");
+    }
+    let _ = writeln!(f, "==========================================================");
+    let _ = writeln!(f, "Below is the wine process stderr (game + injector + Wine).");
+    let _ = writeln!(f, "An unhandled C++ exception prints 'Unhandled exception:");
+    let _ = writeln!(f, "0xe06d7363' with a Backtrace naming the faulting module.");
+    let _ = writeln!(f, "----------------------------------------------------------\n");
+    let _ = f.flush();
+    Some(path)
+}
+
+// Wait (off-thread) for the launched cxstart/wine process to exit, then append
+// the exit status and the tail of the SA-MP chatlog (the in-game "samp debug")
+// to the session log. Non-blocking: the launcher process stays alive while the
+// user plays, so the thread lives until the game ends.
+#[cfg(not(target_os = "windows"))]
+fn finalize_session_log(mut child: std::process::Child, log_path: PathBuf) {
+    use std::io::Write;
+    std::thread::spawn(move || {
+        let status = child.wait();
+        let exit_code = status
+            .as_ref()
+            .ok()
+            .and_then(|s| s.code())
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "?".into());
+        if let Ok(mut f) = std::fs::OpenOptions::new().append(true).open(&log_path) {
+            let ts = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
+            let _ = writeln!(f, "\n----------------------------------------------------------");
+            let _ = writeln!(f, "[{ts}] game process exited (code {exit_code}): {status:?}");
+            if exit_code == "3" {
+                let _ = writeln!(f, "  note: exit code 3 = CRT abort() — an unhandled C++");
+                let _ = writeln!(f, "  exception / terminate(). Look above for 'Unhandled");
+                let _ = writeln!(f, "  exception: 0xe06d7363' and its Backtrace.");
+            }
+            if let Some(home) = dirs_next::home_dir() {
+                let chat = home.join("Documents/GTA San Andreas User Files/SAMP/chatlog.txt");
+                if let Ok(contents) = std::fs::read_to_string(&chat) {
+                    let lines: Vec<&str> = contents.lines().collect();
+                    let tail = &lines[lines.len().saturating_sub(40)..];
+                    let _ = writeln!(f, "----- SA-MP chatlog (last {} lines) -----", tail.len());
+                    for l in tail {
+                        let _ = writeln!(f, "{l}");
+                    }
+                }
+            }
+            let _ = writeln!(f, "================ session end ================");
+            let _ = f.flush();
+        }
+    });
+}
+
 #[cfg(not(target_os = "windows"))]
 pub async fn run_samp(
     name: &str,
@@ -117,8 +223,17 @@ pub async fn run_samp(
     omp_file: &str,
     password: &str,
     custom_game_exe: &str,
+    injector_path: Option<&Path>,
+    debug: bool,
+    detailed: bool,
+    audio_fix: bool,
 ) -> Result<()> {
     let game_dir = PathBuf::from(executable_dir);
+    let wine_channels = if detailed {
+        DETAILED_WINE_CHANNELS
+    } else {
+        STANDARD_WINE_CHANNELS
+    };
     if !game_dir.is_dir() {
         return Err(LauncherError::NotFound(format!(
             "GTA SA directory not found: {}",
@@ -136,8 +251,6 @@ pub async fn run_samp(
         std::thread::sleep(std::time::Duration::from_millis(1200));
     }
 
-    // Resolve the executable: explicit override, else the macOS/CrossOver
-    // 1.0 downgrade name used by this port.
     let exe_name = if !custom_game_exe.is_empty() {
         custom_game_exe.to_string()
     } else {
@@ -151,13 +264,11 @@ pub async fn run_samp(
         )));
     }
 
-    // Place the chosen client DLLs next to the exe. The proxy DLL needs them
-    // on disk before launch; proxy installation itself happens below after
-    // the bottle registry settings have been applied.
+    // Place the chosen client DLLs next to the exe so the injector can find
+    // them by their canonical Windows paths inside the bottle.
     place_client_file(&game_dir, dll_path, SAMP_DLL)?;
     place_client_file(&game_dir, omp_file, OMP_CLIENT_DLL)?;
 
-    // The Wine prefix is the bottle root: nearest ancestor with a drive_c.
     let prefix = {
         let mut cur = game_dir.as_path();
         let mut found: Option<PathBuf> = None;
@@ -202,6 +313,16 @@ pub async fn run_samp(
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_default();
 
+    // Debug mode (Settings → Danger Zone): inject via the vorbisFile.dll proxy
+    // (so the game is cxstart's direct child and keeps its stderr) and capture
+    // a verbose per-session log. Off: restore the genuine vorbisFile.dll so a
+    // left-over proxy can't double-inject with the external injector.
+    if debug {
+        stage_vorbis_proxy(&game_dir)?;
+    } else {
+        restore_vorbis_proxy(&game_dir);
+    }
+
     // Map a unix path inside the bottle to its Windows path: everything
     // under <prefix>/drive_c maps to C:\ .
     let to_win_path = |p: &Path| -> Option<String> {
@@ -220,16 +341,51 @@ pub async fn run_samp(
                     .to_string(),
             )
         })?;
-        let mut cmd = Command::new(wine);
-        cmd.env("WINEPREFIX", &pfx)
+        if debug {
+            stage_vorbis_proxy(&game_dir)?;
+            let header = vec![
+                ("mode".into(), "wine fallback (no CrossOver) + vorbis-proxy".to_string()),
+                ("level".into(), if detailed { "detailed" } else { "standard" }.to_string()),
+                ("WINEDEBUG".into(), wine_channels.to_string()),
+                ("wine".into(), wine.display().to_string()),
+                ("prefix".into(), pfx.display().to_string()),
+                ("exe".into(), exe_path.display().to_string()),
+                ("args".into(), game_args.join(" ")),
+            ];
+            let log_path = start_session_log(&game_dir, &header);
+            // Running wine directly: its stderr is ours, so redirect it to the
+            // session log file (no cxstart --cx-log here).
+            let log_file = log_path.as_ref().and_then(|p| {
+                std::fs::OpenOptions::new().append(true).open(p).ok()
+            });
+            let mut cmd = Command::new(wine);
+            cmd.env("WINEPREFIX", &pfx)
+                .env("WINEDEBUG", wine_channels)
+                .arg(&exe_path)
+                .args(&game_args)
+                .current_dir(&game_dir)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(log_file.map(Stdio::from).unwrap_or_else(Stdio::null));
+            info!("[run_samp] wine fallback exe='{}' debug=on", exe_path.display());
+            let child = cmd
+                .spawn()
+                .map_err(|e| LauncherError::Process(format!("Failed to launch via Wine: {}", e)))?;
+            if let Some(p) = log_path {
+                finalize_session_log(child, p);
+            }
+            return Ok(());
+        }
+        restore_vorbis_proxy(&game_dir);
+        info!("[run_samp] wine fallback exe='{}' debug=off", exe_path.display());
+        return Command::new(wine)
+            .env("WINEPREFIX", &pfx)
             .arg(&exe_path)
             .args(&game_args)
             .current_dir(&game_dir)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null());
-        info!("[run_samp] wine fallback exe='{}'", exe_path.display());
-        return cmd
+            .stderr(Stdio::null())
             .spawn()
             .map(|_| ())
             .map_err(|e| LauncherError::Process(format!("Failed to launch via Wine: {}", e)));
@@ -237,10 +393,8 @@ pub async fn run_samp(
 
     // --- CrossOver path ---------------------------------------------------
 
-    // Apply bottle registry settings before launch (best effort):
-    //  * HKCU\Software\SAMP  : samp_debug.exe reads gta_sa_exe + PlayerName
-    //  * Wine\DirectSound    : HW-accel "Emulation" avoids the macOS
-    //    CoreAudio/mmdevapi assertion that crashes GTA SA ~17s in.
+    // Write the SA-MP client registry key so the game knows the exe path and
+    // the player name — SA-MP reads HKCU\Software\SAMP on startup.
     let reg = |key: &str, val: &str, data: &str| {
         let _ = Command::new(cxstart)
             .arg("--bottle")
@@ -252,67 +406,129 @@ pub async fn run_samp(
             .status();
         info!("[run_samp] reg add {}\\{} = {}", key, val, data);
     };
+    let reg_del = |key: &str, val: &str| {
+        let _ = Command::new(cxstart)
+            .arg("--bottle")
+            .arg(&bottle)
+            .args(["reg", "delete", key, "/v", val, "/f"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        info!("[run_samp] reg delete {}\\{}", key, val);
+    };
     if let Some(exe_win) = to_win_path(&exe_path) {
         reg("HKCU\\Software\\SAMP", "gta_sa_exe", &exe_win);
     }
     reg("HKCU\\Software\\SAMP", "PlayerName", name);
-    reg(
-        "HKCU\\Software\\Wine\\DirectSound",
-        "HardwareAcceleration",
-        "Emulation",
-    );
-    reg(
-        "HKCU\\Software\\Wine\\DirectSound",
-        "DefaultSampleRate",
-        "44100",
-    );
-    reg(
-        "HKCU\\Software\\Wine\\DirectSound",
-        "DefaultBitsPerSample",
-        "16",
-    );
-    // Remove any previously-set Wine virtual desktop so the game runs
-    // normally (fullscreen) rather than inside a forced window.
-    let _ = Command::new(cxstart)
-        .arg("--bottle")
-        .arg(&bottle)
-        .args(["reg", "delete", "HKCU\\Software\\Wine\\Explorer", "/v", "Desktop", "/f"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
-    info!("[run_samp] removed Wine virtual desktop (fullscreen)");
 
-    // open.mp / SA-MP injection under Wine. Native DLL injection is impossible from
-    // macOS, and samp_debug.exe is localhost-only. Instead install a
-    // vorbisFile.dll proxy: GTA SA imports vorbisFile.dll for audio, so the
-    // proxy is auto-loaded and loads samp.dll, then omp-client.dll. The
-    // client DLLs then read our -c -n -h -p args and connect to the real
-    // server. The proxy writes omp-loader.log in the game directory if a DLL
-    // fails to load, and forwards every export to the renamed real DLL
-    // (vorbisFile_o.dll), so game audio is unaffected.
-    install_vorbis_proxy(&game_dir, false)?;
+    // Audio fix (Advanced → Audio fix, on by default). GTA SA aborts the whole
+    // process (exit 3) when Wine's mmdevapi hits assert(!status) negotiating an
+    // audio format CoreAudio rejects — a frequent, intermittent crash on macOS.
+    // Forcing DirectSound to software emulation at a fixed 48kHz/16-bit format
+    // (which every built-in Mac output supports) keeps the game off that failing
+    // path. Audio must be a real driver regardless: with it empty the game
+    // refuses to start ("cannot find Audio card installed"). When the user
+    // reverts the fix we delete those DirectSound values so Wine negotiates the
+    // format itself (i.e. back to the crashy default) for comparison.
+    reg("HKCU\\Software\\Wine\\Drivers", "Audio", "coreaudio");
+    if audio_fix {
+        reg("HKCU\\Software\\Wine\\DirectSound", "HardwareAcceleration", "Emulation");
+        reg("HKCU\\Software\\Wine\\DirectSound", "DefaultSampleRate", "48000");
+        reg("HKCU\\Software\\Wine\\DirectSound", "DefaultBitsPerSample", "16");
+    } else {
+        reg_del("HKCU\\Software\\Wine\\DirectSound", "HardwareAcceleration");
+        reg_del("HKCU\\Software\\Wine\\DirectSound", "DefaultSampleRate");
+        reg_del("HKCU\\Software\\Wine\\DirectSound", "DefaultBitsPerSample");
+    }
 
-    // Launch the game with the connect args; the proxy-loaded client DLLs
-    // parse these and join the server automatically.
+    let exe_win = to_win_path(&exe_path).ok_or_else(|| {
+        LauncherError::NotFound("game exe is outside the bottle drive_c".to_string())
+    })?;
+
+    // --- Debug: launch the game directly; the vorbis proxy injects samp.dll +
+    // omp-client.dll. cxstart's --cx-log redirects the wine process stderr (the
+    // game + Wine, incl. unhandled-exception backtraces) to the session log —
+    // piping cxstart's own stdio does NOT capture a GUI app's output. ---
+    if debug {
+        let header = vec![
+            ("mode".into(), "cxstart --cx-log + vorbis-proxy injection".to_string()),
+            ("level".into(), if detailed { "detailed" } else { "standard" }.to_string()),
+            ("WINEDEBUG".into(), wine_channels.to_string()),
+            ("bottle".into(), bottle.clone()),
+            ("exe".into(), exe_win.clone()),
+            ("args".into(), game_args.join(" ")),
+            ("samp".into(), to_win_path(&game_dir.join(SAMP_DLL)).unwrap_or_default()),
+            ("omp".into(), if omp_file.is_empty() {
+                "<disabled>".into()
+            } else {
+                to_win_path(&game_dir.join(OMP_CLIENT_DLL)).unwrap_or_default()
+            }),
+            ("game_dir".into(), game_dir.display().to_string()),
+        ];
+        let log_path = start_session_log(&game_dir, &header);
+
+        let mut cmd = Command::new(cxstart);
+        cmd.arg("--bottle").arg(&bottle);
+        if let Some(ref p) = log_path {
+            cmd.arg("--cx-log").arg(p).arg("--debugmsg").arg(wine_channels);
+            info!("[run_samp] session log -> {}", p.display());
+        }
+        cmd.arg(&exe_win)
+            .args(&game_args)
+            .current_dir(&game_dir)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        info!("[run_samp] cxstart bottle='{}' exe='{}' debug=on (vorbis-proxy)", bottle, exe_win);
+
+        let child = cmd
+            .spawn()
+            .map_err(|e| LauncherError::Process(format!("Failed to launch game: {}", e)))?;
+        if let Some(p) = log_path {
+            finalize_session_log(child, p);
+        }
+        return Ok(());
+    }
+
+    // --- Normal: external injector spawns the game and injects the DLLs. ---
+    let injector_unix = stage_injector(&game_dir, injector_path)?;
+    let injector_win = to_win_path(&injector_unix).ok_or_else(|| {
+        LauncherError::NotFound("injector.exe is outside the bottle drive_c".to_string())
+    })?;
+
+    // Build the game args string as a single quoted argument for injector.exe
+    // --spawn (it passes it verbatim to CreateProcess).
+    let args_str = game_args.join(" ");
+
+    let samp_win = to_win_path(&game_dir.join(SAMP_DLL)).ok_or_else(|| {
+        LauncherError::NotFound("samp.dll is outside the bottle drive_c".to_string())
+    })?;
+    let mut dll_args: Vec<String> = vec!["--".into(), samp_win];
+    if !omp_file.is_empty() {
+        if let Some(omp_win) = to_win_path(&game_dir.join(OMP_CLIENT_DLL)) {
+            dll_args.push(omp_win);
+        }
+    }
+
     let mut cmd = Command::new(cxstart);
     cmd.arg("--bottle")
         .arg(&bottle)
-        .arg(&exe_path)
-        .args(&game_args)
+        .arg(&injector_win)
+        .args(["--spawn", &exe_win, &args_str])
+        .args(&dll_args)
         .current_dir(&game_dir)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     info!(
-        "[run_samp] cxstart bottle='{}' exe='{}'",
-        bottle,
-        exe_path.display()
+        "[run_samp] cxstart bottle='{}' injector='{}' exe='{}' debug=off",
+        bottle, injector_win, exe_win
     );
 
     cmd.spawn()
         .map(|_| ())
-        .map_err(|e| LauncherError::Process(format!("Failed to launch the game through Wine: {}", e)))
+        .map_err(|e| LauncherError::Process(format!("Failed to launch injector through Wine: {}", e)))
 }
 
 #[cfg(target_os = "windows")]
@@ -325,6 +541,10 @@ pub async fn run_samp(
     omp_file: &str,
     password: &str,
     custom_game_exe: &str,
+    _injector_path: Option<&std::path::Path>,
+    _debug: bool,
+    _detailed: bool,
+    _audio_fix: bool,
 ) -> Result<()> {
     // Prepare the command to spawn the executable
     let target_game_exe = if custom_game_exe.len() > 0 {
