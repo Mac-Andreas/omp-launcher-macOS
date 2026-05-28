@@ -10,6 +10,7 @@ import { useNicknameAlert } from "../states/nicknameAlert";
 import { useSettings } from "../states/settings";
 import { useTheme } from "../states/theme";
 import { sc } from "../utils/sizeScaler";
+import { telemetryWindowFocus } from "../utils/telemetry";
 import { ListType } from "../utils/types";
 
 const NavBar = memo(() => {
@@ -101,7 +102,10 @@ const NavBar = memo(() => {
   );
 
   const handleTabChange = useCallback(
-    (type: string) => setListType(type as ListType),
+    (type: string) => {
+      setListType(type as ListType);
+      telemetryWindowFocus(type);
+    },
     [setListType]
   );
 
@@ -134,7 +138,7 @@ const NavBar = memo(() => {
             title={t("nickname")}
             image={images.icons.nickname}
             size={sc(16)}
-            color={theme.textSecondary}
+            color={`${theme.textPrimary}99`}
           />
           <TextInput
             value={nickName}
