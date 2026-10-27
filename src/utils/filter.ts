@@ -336,6 +336,8 @@ export const convertRgbToFilter = (
 
   if (color_ === "#FFFFFF40") color_ = "#59595D";
   if (color_ === "#1A1A1E80") color_ = "#8C8C90";
+  // Strip alpha channel from 8-digit hex before converting
+  if (/^#[a-f\d]{8}$/i.test(color_)) color_ = color_.slice(0, 7);
 
   const rgb = hexToRgb(color_);
   if (rgb === null || rgb.length !== 3) {

@@ -24,7 +24,10 @@ export const lightThemeColors: ThemeColors = {
   primary: "#897AF1",
   secondary: "#FFFFFF",
   textPrimary: "#1A1A1E",
-  textSecondary: "#1A1A1E80",
+  // Darkened from 0x80 (50%) → 0xB3 (70%) so secondary glyphs (header lock,
+  // bottom-bar icons, ping) read clearly on the light background instead of
+  // washing out to pale grey.
+  textSecondary: "#1A1A1EB3",
   textPlaceholder: "#6D7071",
   itemBackgroundColor: "#F3F6FC",
   textInputBackgroundColor: "#F3F6FC",

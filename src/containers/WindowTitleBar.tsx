@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api";
+import { getVersion } from "@tauri-apps/api/app";
 import {
   appWindow,
   currentMonitor,
@@ -7,215 +8,25 @@ import {
   PhysicalSize,
 } from "@tauri-apps/api/window";
 import { useTranslation } from "react-i18next";
-import { memo, useCallback, useMemo, useRef, useState, useEffect } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { ColorValue, Pressable, StyleSheet, TouchableOpacity, View } from "react-native";
 import Icon from "../components/Icon";
 import Text from "../components/Text";
 import { IN_GAME, IN_GAME_PROCESS_ID } from "../constants/app";
 import { images } from "../constants/images";
+import { useFeedback } from "../states/feedback";
 import { useSettingsModal } from "../states/settingsModal";
 import { useTheme } from "../states/theme";
 import { sc } from "../utils/sizeScaler";
 import { useGameLaunch } from "../states/gameLaunch";
 
-const SUPABASE_URL  = "https://tmenljjfshefocoqnwgi.supabase.co";
-const SUPABASE_ANON = "sb_publishable_waBEtV1eAdoXRMET_ZRxpw_ANZUgZBw";
-
-// Fetch the active feedback campaign (if any) for this device's source
-async function fetchActiveCampaign(source: string) {
-  try {
-    const res = await fetch(
-      `${SUPABASE_URL}/rest/v1/feedback_campaigns?select=*&status=eq.active&order=activated_at.desc&limit=1`,
-      { headers: { apikey: SUPABASE_ANON, Authorization: `Bearer ${SUPABASE_ANON}` } }
-    );
-    if (!res.ok) return null;
-    const rows = await res.json();
-    const campaign = rows?.find(
-      (c: any) => !c.target_source || c.target_source === source
-    );
-    return campaign ?? null;
-  } catch { return null; }
-}
-
-async function submitFeedback(campaignId: number, anonymousId: string, source: string, answers: Record<number, string | number>) {
-  try {
-    await fetch(`${SUPABASE_URL}/rest/v1/feedback_responses`, {
-      method: "POST",
-      headers: {
-        apikey: SUPABASE_ANON,
-        Authorization: `Bearer ${SUPABASE_ANON}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ campaign_id: campaignId, anonymous_id: anonymousId, source, answers }),
-    });
-  } catch { /* silent */ }
-}
-
-// Inline feedback popup component
-const FeedbackPopup = memo(({ onClose }: { onClose: () => void }) => {
-  const { theme } = useTheme();
-  const [campaign, setCampaign] = useState<any>(null);
-  const [answers, setAnswers] = useState<Record<number, string | number>>({});
-  const [submitted, setSubmitted] = useState(false);
-  const [loading, setLoading] = useState(true);
-
-  // Get anonymous_id from localStorage (same key as telemetry.ts)
-  const anonId = typeof localStorage !== "undefined"
-    ? (localStorage.getItem("telemetry-anonymous-id") ?? "unknown")
-    : "unknown";
-
-  useEffect(() => {
-    fetchActiveCampaign("macandreas").then(c => {
-      setCampaign(c);
-      setLoading(false);
-    });
-  }, []);
-
-  const handleSubmit = async () => {
-    if (!campaign) return;
-    await submitFeedback(campaign.id, anonId, "macandreas", answers);
-    setSubmitted(true);
-  };
-
-  const overlayStyle = useMemo(() => ({
-    position: "fixed" as const,
-    inset: 0,
-    background: "rgba(0,0,0,0.55)",
-    backdropFilter: "blur(6px)",
-    WebkitBackdropFilter: "blur(6px)",
-    zIndex: 9999,
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-  }), []);
-
-  const modalStyle = useMemo(() => ({
-    background: theme.secondary,
-    border: `1px solid ${theme.textPrimary}22`,
-    borderRadius: sc(12),
-    width: Math.min(420, window.innerWidth - 40),
-    maxHeight: "80vh",
-    overflow: "hidden" as const,
-    display: "flex",
-    flexDirection: "column" as const,
-    boxShadow: "0 24px 64px rgba(0,0,0,0.7)",
-  }), [theme]);
-
-  // Pure HTML rendering — this popup lives in a WebView so CSS strings work fine
-  const btnBase: React.CSSProperties = {
-    flex: 1, padding: `${sc(9)}px`, borderRadius: sc(8),
-    textAlign: "center", cursor: "pointer", fontWeight: 600,
-    fontSize: sc(13), border: "none",
-  };
-
-  if (loading) return (
-    <div style={overlayStyle}>
-      <div style={{...modalStyle, padding: sc(24), textAlign: "center"}}>
-        <span style={{color: theme.textSecondary, fontSize: sc(14)}}>Loading…</span>
-      </div>
-    </div>
-  );
-
-  if (!campaign) return (
-    <div style={overlayStyle}>
-      <div style={{...modalStyle, padding: sc(24)}}>
-        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:sc(16)}}>
-          <span style={{color:theme.textPrimary,fontWeight:600,fontSize:sc(15)}}>💬 Feedback</span>
-          <button onClick={onClose} style={{background:"none",border:"none",color:theme.textSecondary,fontSize:sc(18),cursor:"pointer",padding:sc(4)}}>✕</button>
-        </div>
-        <p style={{color:theme.textSecondary,fontSize:sc(13),margin:`0 0 ${sc(16)}px`}}>No active feedback campaigns at this time. Check back later!</p>
-        <button onClick={onClose} style={{...btnBase,backgroundColor:theme.primary,color:"#fff",width:"100%"}}>Close</button>
-      </div>
-    </div>
-  );
-
-  if (submitted) return (
-    <div style={overlayStyle}>
-      <div style={{...modalStyle, padding: sc(24), textAlign: "center"}}>
-        <div style={{fontSize:sc(32),marginBottom:sc(8)}}>🎉</div>
-        <div style={{color:theme.textPrimary,fontWeight:600,fontSize:sc(16),marginBottom:sc(8)}}>Thank you!</div>
-        <p style={{color:theme.textSecondary,fontSize:sc(13),marginBottom:sc(20)}}>Your feedback has been submitted.</p>
-        <button onClick={onClose} style={{...btnBase,backgroundColor:theme.primary,color:"#fff",width:"100%"}}>Close</button>
-      </div>
-    </div>
-  );
-
-  const questions: any[] = campaign.questions || [];
-
-  return (
-    <div style={overlayStyle}>
-      <div style={modalStyle}>
-        {/* Header */}
-        <div style={{padding:`${sc(14)}px ${sc(16)}px`,borderBottom:`1px solid ${theme.textPrimary}1F`,display:"flex",alignItems:"center"}}>
-          <span style={{color:theme.textPrimary,fontWeight:600,fontSize:sc(15),flex:1}}>💬 {campaign.title}</span>
-          <button onClick={onClose} style={{background:"none",border:"none",color:theme.textSecondary,fontSize:sc(18),cursor:"pointer",padding:sc(4)}}>✕</button>
-        </div>
-
-        {/* Questions — scrollable */}
-        <div style={{flex:1,overflowY:"auto",padding:`${sc(16)}px`}}>
-          {campaign.description && (
-            <p style={{color:theme.textSecondary,fontSize:sc(12),marginBottom:sc(14)}}>{campaign.description}</p>
-          )}
-          {questions.map((q: any, i: number) => (
-            <div key={i} style={{marginBottom:sc(16)}}>
-              <div style={{color:theme.textPrimary,fontWeight:600,fontSize:sc(13),marginBottom:sc(8)}}>
-                {i+1}. {q.text}
-              </div>
-              {q.type === "likert" ? (
-                <div style={{display:"flex",gap:sc(6)}}>
-                  {[1,2,3,4,5].map(n => (
-                    <button key={n} onClick={() => setAnswers(a=>({...a,[i]:n}))}
-                      style={{flex:1,padding:sc(8),borderRadius:sc(6),cursor:"pointer",
-                        backgroundColor: answers[i]===n ? theme.primary : theme.itemBackgroundColor,
-                        border:`1px solid ${answers[i]===n ? theme.primary : theme.textPrimary+'44'}`,
-                        color: answers[i]===n ? "#fff" : theme.textPrimary, fontSize:sc(13), fontWeight:600}}>
-                      {n}
-                    </button>
-                  ))}
-                </div>
-              ) : q.type === "mcq" ? (
-                <div style={{display:"flex",flexDirection:"column",gap:sc(6)}}>
-                  {(q.options||[]).map((opt: string, oi: number) => (
-                    <button key={oi} onClick={() => setAnswers(a=>({...a,[i]:opt}))}
-                      style={{padding:`${sc(8)}px ${sc(10)}px`,borderRadius:sc(6),cursor:"pointer",textAlign:"left",
-                        backgroundColor: answers[i]===opt ? `${theme.primary}22` : theme.itemBackgroundColor,
-                        border:`1px solid ${answers[i]===opt ? theme.primary : theme.textPrimary+'44'}`,
-                        color: answers[i]===opt ? theme.primary : theme.textPrimary, fontSize:sc(13)}}>
-                      ○ {opt}
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <textarea
-                  value={String(answers[i] ?? "")}
-                  onChange={(e) => setAnswers(a=>({...a,[i]:e.target.value}))}
-                  placeholder="Your answer…"
-                  style={{width:"100%",backgroundColor:theme.itemBackgroundColor,
-                    border:`1px solid ${theme.textPrimary}44`,borderRadius:sc(6),
-                    padding:sc(8),color:theme.textPrimary,fontSize:sc(13),minHeight:sc(60),
-                    resize:"vertical",outline:"none",fontFamily:"inherit"}}
-                />
-              )}
-            </div>
-          ))}
-        </div>
-
-        {/* Footer */}
-        <div style={{padding:`${sc(12)}px ${sc(16)}px`,borderTop:`1px solid ${theme.textPrimary}1F`,display:"flex",gap:sc(8)}}>
-          <button onClick={onClose}
-            style={{...btnBase,backgroundColor:theme.itemBackgroundColor,color:theme.textSecondary,
-              border:`1px solid ${theme.textPrimary}22`}}>
-            Skip
-          </button>
-          <button onClick={handleSubmit}
-            style={{...btnBase,backgroundColor:theme.primary,color:"#fff"}}>
-            Submit
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-});
+// Orange accent for the BETA badge — distinct from the theme's primary so it
+// reads as a "pre-release" marker rather than a normal UI element. The light
+// variant is a deeper amber so the badge text/border doesn't wash out on the
+// white title bar.
+const BETA_COLOR_DARK = "#F5A623";
+const BETA_COLOR_LIGHT = "#B86E00";
 
 // Fallback traffic lights for the borderless in-game overlay window only.
 // The main launcher window uses real macOS controls (titleBarStyle: Overlay).
@@ -267,6 +78,7 @@ interface CustomButtonProps {
   color?: ColorValue;
   backgroundColor?: string;
   borderColor?: string;
+  disabled?: boolean;
 }
 
 const CustomWindowTitleBarButtons = memo<CustomButtonProps>(
@@ -281,6 +93,7 @@ const CustomWindowTitleBarButtons = memo<CustomButtonProps>(
     color,
     backgroundColor,
     borderColor,
+    disabled = false,
   }) => {
     const isSvg = useMemo(() => image.includes(".svg"), [image]);
 
@@ -293,8 +106,10 @@ const CustomWindowTitleBarButtons = memo<CustomButtonProps>(
         backgroundColor,
         border: borderColor ? `1px solid ${borderColor}` : "none",
         boxSizing: "border-box" as const,
+        opacity: disabled ? 0.4 : 1,
+        pointerEvents: (disabled ? "none" : "auto") as "none" | "auto",
       }),
-      [size, marginRight, backgroundColor, borderColor]
+      [size, marginRight, backgroundColor, borderColor, disabled]
     );
 
     const pressableStyle = useMemo(
@@ -326,17 +141,33 @@ const CustomWindowTitleBarButtons = memo<CustomButtonProps>(
 
 const WindowTitleBar = memo(() => {
   const { t, i18n } = useTranslation();
-  const { theme, setTheme } = useTheme();
+  const { theme, setTheme, themeType } = useTheme();
   const themeMode = useTheme((s) => s.themeMode);
+  const BETA_COLOR = themeType === "light" ? BETA_COLOR_LIGHT : BETA_COLOR_DARK;
   const { show: showSettings } = useSettingsModal();
   const { launching } = useGameLaunch();
-  const [feedbackOpen, setFeedbackOpen] = useState(false);
-  const [hasCampaign, setHasCampaign] = useState(false);
+  // Single source of truth — fetched once on app launch.
+  const hasCampaign = useFeedback((s) => !!s.campaign);
+  const openFeedback = useFeedback((s) => s.openPopup);
 
-  // Check once on mount whether there's an active campaign (for dot indicator)
+  // App version for the BETA badge, read live from the Tauri bundle. The badge
+  // only shows for pre-release builds (version contains "beta"), so a future
+  // stable release hides it automatically with no code change.
+  const [version, setVersion] = useState("");
+  const [betaTooltip, setBetaTooltip] = useState(false);
+  const [tooltipPos, setTooltipPos] = useState({ top: 0, left: 0 });
+  const badgeRef = useRef<HTMLDivElement | null>(null);
+  const isBeta = useMemo(() => /beta/i.test(version), [version]);
   useEffect(() => {
-    if (IN_GAME) return;
-    fetchActiveCampaign("macandreas").then(c => setHasCampaign(!!c));
+    getVersion().then(setVersion).catch(() => {});
+  }, []);
+
+  // Anchor the portalled tooltip just below the badge using its live screen
+  // rect — the portal renders to <body>, so it needs absolute coordinates.
+  const showBetaTooltip = useCallback(() => {
+    const rect = badgeRef.current?.getBoundingClientRect();
+    if (rect) setTooltipPos({ top: rect.bottom + sc(6), left: rect.left });
+    setBetaTooltip(true);
   }, []);
 
   const containerStyles = useMemo(
@@ -533,8 +364,93 @@ const WindowTitleBar = memo(() => {
           color={theme.textPrimary}
           style={containerStyles.titleText}
         >
-          Open Multiplayer
+          Open Multiplayer — Launcher
         </Text>
+        {/* BETA badge with version + (?) tooltip. Only shown for pre-release
+            builds (version contains "beta"); a stable release hides it with no
+            code change. The tooltip is rendered through a body portal so it
+            escapes the title bar's clipped/overlapped layout. */}
+        {isBeta && (
+          <div
+            ref={badgeRef}
+            onMouseEnter={showBetaTooltip}
+            onMouseLeave={() => setBetaTooltip(false)}
+            style={{
+              // @ts-ignore
+              position: "relative",
+              zIndex: 20,
+              display: "flex",
+              flexDirection: "row",
+              alignItems: "center",
+              marginLeft: sc(10),
+              height: sc(24),
+              paddingLeft: sc(10),
+              paddingRight: sc(8),
+              borderRadius: sc(7),
+              backgroundColor: `${BETA_COLOR}22`,
+              border: `1px solid ${BETA_COLOR}66`,
+              gap: sc(6),
+              cursor: "help",
+            }}
+          >
+            <Text
+              semibold
+              size={1}
+              color={BETA_COLOR}
+              style={{ fontSize: sc(11), letterSpacing: 0.5 }}
+            >
+              BETA{version ? ` ${version}` : ""}
+            </Text>
+            <div
+              style={{
+                width: sc(16),
+                height: sc(16),
+                borderRadius: sc(8),
+                backgroundColor: `${BETA_COLOR}40`,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <Text
+                semibold
+                size={1}
+                color={BETA_COLOR}
+                style={{ fontSize: sc(10) }}
+              >
+                ?
+              </Text>
+            </div>
+          </div>
+        )}
+        {betaTooltip &&
+          createPortal(
+            <div
+              style={{
+                position: "fixed",
+                top: tooltipPos.top,
+                left: tooltipPos.left,
+                width: sc(270),
+                boxSizing: "border-box",
+                padding: `${sc(11)}px ${sc(13)}px`,
+                borderRadius: sc(8),
+                backgroundColor: theme.itemBackgroundColor,
+                border: `1px solid ${theme.textPrimary}26`,
+                boxShadow: "0 6px 20px rgba(0,0,0,0.35)",
+                zIndex: 99999,
+                pointerEvents: "none",
+                fontSize: sc(13),
+                lineHeight: `${sc(18)}px`,
+                color: theme.textPrimary as string,
+                whiteSpace: "normal",
+                fontFamily: "Proxima Nova Regular",
+              }}
+            >
+              This is a beta version — it may contain bugs, but also includes
+              fixes and improvements from past releases.
+            </div>,
+            document.body
+          )}
       </View>
       {/* @ts-ignore */}
       <View style={containerStyles.rightSection}>
@@ -552,11 +468,13 @@ const WindowTitleBar = memo(() => {
             </TouchableOpacity>
           </View>
         )}
-        {/* Feedback button — hidden during gameplay, only shown when a campaign is active */}
-        {!IN_GAME && !launching && (
+        {/* Feedback button — hidden during gameplay, only rendered when the
+            server has an active campaign for this build. No campaign ⇒ no
+            button (and no empty popup is ever shown). */}
+        {!IN_GAME && !launching && hasCampaign && (
           <div style={{ position: "relative", marginRight: sc(8) }}>
             <Pressable
-              onPress={() => setFeedbackOpen(true)}
+              onPress={openFeedback}
               style={({ pressed, hovered }: any) => ({
                 height: sc(30),
                 paddingHorizontal: sc(10),
@@ -578,15 +496,14 @@ const WindowTitleBar = memo(() => {
                 Provide Feedback
               </Text>
             </Pressable>
-            {/* Dot indicator when an active campaign exists */}
-            {hasCampaign && (
-              <div style={{
-                position: "absolute", top: sc(-2), right: sc(-2),
-                width: sc(7), height: sc(7), borderRadius: sc(4),
-                backgroundColor: "#1DB954",
-                boxShadow: "0 0 6px #1DB954",
-              }} />
-            )}
+            {/* Green attention dot — the button only renders while a campaign
+                is active, so this is always shown alongside it. */}
+            <div style={{
+              position: "absolute", top: sc(-2), right: sc(-2),
+              width: sc(7), height: sc(7), borderRadius: sc(4),
+              backgroundColor: "#1DB954",
+              boxShadow: "0 0 6px #1DB954",
+            }} />
           </div>
         )}
         <CustomWindowTitleBarButtons
@@ -599,6 +516,9 @@ const WindowTitleBar = memo(() => {
           marginRight={!IN_GAME ? sc(10) : 0}
           onPress={handleThemeToggle}
         />
+        {/* Settings is blocked while a launch is in progress (including the
+            audio-crash gate) — the launch overlay owns the screen, so opening
+            Settings on top of the gate popup would stack two modals. */}
         {!IN_GAME && (
           <CustomWindowTitleBarButtons
             title={buttonTitles.settings}
@@ -606,12 +526,9 @@ const WindowTitleBar = memo(() => {
             color={theme.textPrimary}
             backgroundColor={theme.itemBackgroundColor}
             borderColor={`${theme.textPrimary}40`}
-            onPress={showSettings}
+            onPress={launching ? () => {} : showSettings}
+            disabled={launching}
           />
-        )}
-        {/* Feedback popup — rendered outside normal flow with backdrop blur */}
-        {feedbackOpen && (
-          <FeedbackPopup onClose={() => setFeedbackOpen(false)} />
         )}
       </View>
     </View>

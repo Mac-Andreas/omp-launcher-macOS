@@ -22,8 +22,6 @@ import { sc } from "./sizeScaler";
 import {
   telemetryGameJoin,
   telemetryGameLeave,
-  stopHeartbeat,
-  startHeartbeat,
 } from "./telemetry";
 import { Server } from "./types";
 
@@ -455,23 +453,57 @@ export const startGame = async (
       ? await getLocalPath(file.path, file.name)
       : idealSAMPDllPath;
 
-  const { setLaunching } = useGameLaunch.getState();
-  setLaunching(true);
-  const { debugMode, debugDetailed, audioFix } = useSettings.getState();
-  invoke("inject", {
-    name: nickname,
-    ip: await getIpAddress(server.ip),
-    port: server.port,
-    exe: gtasaPath,
-    dll: ourSAMPDllPath,
-    ompFile: await getLocalPath("omp", "omp-client.dll"),
-    password,
-    customGameExe,
-    debug: debugMode,
-    debugDetailed: debugMode && debugDetailed,
-    audioFix,
-  })
-    .then(() => {
+  const { setLaunching, setPaused, setGateOpen } = useGameLaunch.getState();
+  const { debugMode, debugDetailed, audioFix, renderFix } =
+    useSettings.getState();
+
+  // The audio route we applied for this launch (default-device switch and/or
+  // our aggregate device), so we can undo it when the game exits. null = we
+  // never changed the route.
+  let routeToRestore: {
+    previousUid: string | null;
+    createdAggregate: boolean;
+  } | null = null;
+
+  // macOS audio-abort auto-retry. On Apple Silicon / CrossOver the game
+  // intermittently aborts (exit 3) the instant it creates its CoreAudio render
+  // unit — a non-deterministic illegal-instruction fault in Apple's audio code
+  // under emulation, not something a config reliably prevents (see
+  // CROSSOVER-BUG-REPORT.md). It strikes during connect/loading, so a crash
+  // shows up as the game process either never appearing or appearing and dying
+  // within a few seconds. Because it's a ~coin-flip per fresh audio-unit init,
+  // simply relaunching usually wins. We retry the launch a few times before
+  // giving up. Only meaningful on macOS; harmless elsewhere (the game rarely
+  // dies this fast on a successful join).
+  const MAX_AUDIO_RETRIES = 3;
+  // A game that dies sooner than this after coming up (or never comes up) is
+  // treated as the early audio/connect crash rather than a real play session.
+  const EARLY_CRASH_MS = 20_000;
+  let audioRetries = 0;
+
+  // The actual launch. Wrapped so the macOS audio-crash gate below can hold it
+  // behind a prompt and only fire it once the user chooses to continue.
+  const doLaunch = async () => {
+    setGateOpen(false);
+    setPaused(false);
+    setLaunching(true);
+    const injectIp = await getIpAddress(server.ip);
+    const ompFile = await getLocalPath("omp", "omp-client.dll");
+    invoke("inject", {
+      name: nickname,
+      ip: injectIp,
+      port: server.port,
+      exe: gtasaPath,
+      dll: ourSAMPDllPath,
+      ompFile,
+      password,
+      customGameExe,
+      debug: debugMode,
+      debugDetailed: debugMode && debugDetailed,
+      audioFix,
+      renderFix,
+    })
+      .then(() => {
       addToRecentlyJoined(server);
       setSelected(undefined);
       telemetryGameJoin(`${server.ip}:${server.port}`, server.hostname, server.usingOmp);
@@ -498,6 +530,32 @@ export const startGame = async (
         const POLL_MS = 800;
       const TIMEOUT_MS = 30_000;
       const start = Date.now();
+
+      // Re-fire the launch after an early audio/connect crash. Returns true if
+      // a retry was started (so the caller stops handling this attempt), false
+      // if the retry budget is spent.
+      const retryAudioCrash = (): boolean => {
+        if (audioRetries >= MAX_AUDIO_RETRIES) return false;
+        // Drop any audio route we set for the dead attempt before the next try,
+        // so we don't leak the device switch / aggregate across retries.
+        if (routeToRestore != null) {
+          invoke("restore_audio_route", {
+            previousUid: routeToRestore.previousUid,
+            destroyAggregate: routeToRestore.createdAggregate,
+          }).catch(() => {});
+          routeToRestore = null;
+        }
+        audioRetries += 1;
+        Log.warn(
+          `[audio] game crashed early on connect; auto-retry ${audioRetries}/${MAX_AUDIO_RETRIES}`
+        );
+        setLaunching(true);
+        // Small breather so the OS reaps the dead process and releases the DLLs
+        // (run_samp also kills stale game processes on entry).
+        setTimeout(() => doLaunch(), 1200);
+        return true;
+      };
+
       const tick = async () => {
         // Cancelled from the overlay: stop polling.
         if (!useGameLaunch.getState().launching) return;
@@ -509,9 +567,6 @@ export const startGame = async (
         }
         if (running) {
           setLaunching(false);
-          // Pause heartbeat while the game is open — avoids loading the CPU
-          // during gameplay. Resume + send game_leave when the process exits.
-          stopHeartbeat();
           const gameStart = Date.now();
           const watchExit = async () => {
             let stillRunning = false;
@@ -521,15 +576,32 @@ export const startGame = async (
             if (stillRunning) {
               setTimeout(watchExit, 5_000);
             } else {
-              const timeOnServer = Math.round((Date.now() - gameStart) / 1000);
+              const elapsed = Date.now() - gameStart;
+              // Came up but died almost immediately: the audio/connect abort.
+              // Auto-retry instead of treating it as a real (short) session.
+              if (elapsed < EARLY_CRASH_MS && retryAudioCrash()) {
+                return;
+              }
+              const timeOnServer = Math.round(elapsed / 1000);
               telemetryGameLeave(`${server.ip}:${server.port}`, timeOnServer);
-              startHeartbeat();
+              // Undo the audio route fix (restore the previous default output
+              // device and destroy our aggregate) now that the game has quit.
+              if (routeToRestore != null) {
+                invoke("restore_audio_route", {
+                  previousUid: routeToRestore.previousUid,
+                  destroyAggregate: routeToRestore.createdAggregate,
+                }).catch(() => {});
+                routeToRestore = null;
+              }
             }
           };
           setTimeout(watchExit, 5_000);
           return;
         }
         if (Date.now() - start >= TIMEOUT_MS) {
+          // Never came up within the window — also the audio abort (it can kill
+          // the game before is_game_running ever sees it). Retry, else give up.
+          if (retryAudioCrash()) return;
           setLaunching(false);
           showOkModal(
             t("game_failed_to_start_title"),
@@ -541,6 +613,125 @@ export const startGame = async (
       };
       setTimeout(tick, POLL_MS);
     });
+  };
+
+  // macOS audio-crash gate. On CrossOver/recent macOS (Tahoe) the game aborts on
+  // the loading screen when Wine renders to the built-in speaker device — a
+  // CoreAudio bug. Testing proved the sample rate is NOT the trigger (44.1 kHz on
+  // the built-in speakers still crashes); only rendering to a *different* output
+  // device avoids it. So if Audio fix is on and the default output is the
+  // built-in speakers, hold the launch behind a prompt and offer to route Wine
+  // to a safe device. Non-built-in default, Audio fix off, or detection failure
+  // → launch straight away.
+  if (audioFix) {
+    let info: {
+      name: string | null;
+      builtIn: boolean;
+      bluetooth: boolean;
+      sampleRate: number | null;
+    } | null = null;
+    try {
+      info = await invoke("get_audio_output_info");
+    } catch {
+      info = null;
+    }
+
+    if (info && info.builtIn) {
+      // Hold the launch behind the gate (overlay in paused/amber state).
+      setLaunching(true);
+      setPaused(true);
+      setGateOpen(true);
+
+      // Apply the audio route fix (switch to an external device if present, else
+      // our aggregate over the speakers), remember it for restore, then launch.
+      const applyRouteAndLaunch = async () => {
+        try {
+          const route = await invoke<{
+            previousUid: string | null;
+            routedTo: string;
+            createdAggregate: boolean;
+          }>("apply_audio_route_fix");
+          routeToRestore = {
+            previousUid: route.previousUid,
+            createdAggregate: route.createdAggregate,
+          };
+        } catch (e) {
+          Log.warn("[audio_fix] route fix failed:", e);
+          // Couldn't reroute — fall through and launch anyway; worst case it
+          // crashes and the user picks the plug-in-a-device path next time.
+        }
+        doLaunch();
+      };
+
+      const showGate = (current: NonNullable<typeof info>) => {
+        const deviceLabel =
+          current.name ||
+          t("audio_fix_device_generic", { defaultValue: "your output device" });
+
+        showMessageBox({
+          title: t("audio_fix_title", {
+            defaultValue: "Avoiding the audio crash",
+          }),
+          description: [
+            t("audio_fix_detected_device", {
+              device: deviceLabel,
+              defaultValue:
+                "Your Mac's audio is set to {{device}}. On recent macOS the game crashes on the loading screen when it plays through the built-in speakers — it's a CrossOver/macOS bug, not the server. Changing the sample rate does NOT fix it; only using a different output device does.",
+            }),
+            t("audio_fix_route_explain", {
+              defaultValue:
+                "The fix below reroutes the game's audio to a safe device for this session (your speakers still work), then restores everything when you quit. Or plug in AirPods/headphones — that's the most reliable fix.",
+            }),
+          ].join("\n\n"),
+          boxWidth: 480,
+          buttonWidth: 150,
+          // Long labels truncate in the horizontal row — stack them vertically.
+          verticalButtons: true,
+          // Dismissing the gate (X / click outside) cancels the held launch.
+          // Without this the launch overlay's invisible gate backdrop stays up
+          // with no dialog and no cancel path, freezing the whole UI.
+          onClose: () => {
+            setGateOpen(false);
+            setPaused(false);
+            setLaunching(false);
+          },
+          buttons: [
+            {
+              title: t("audio_fix_route_and_launch", {
+                defaultValue: "Launch (experimental fix)",
+              }),
+              hint: t("audio_fix_route_and_launch_hint", {
+                defaultValue:
+                  "Reroutes the game away from the built-in speaker driver (to headphones if plugged in, otherwise through a virtual device wrapping your speakers so you still hear audio), launches, then restores your audio when you quit. Experimental.",
+              }),
+              onPress: () => applyRouteAndLaunch(),
+            },
+            {
+              title: t("audio_fix_open_setup", {
+                defaultValue: "Open Audio MIDI Setup",
+              }),
+              closeOnPress: false,
+              onPress: () => {
+                invoke("open_audio_midi_setup").catch(() => {});
+              },
+            },
+            {
+              title: t("audio_fix_continue_anyway", {
+                defaultValue: "Launch anyway",
+              }),
+              onPress: () => doLaunch(),
+            },
+          ],
+        });
+      };
+
+      showGate(info);
+      return;
+    }
+  }
+
+  // Non-built-in output / no gate needed: launch directly.
+  doLaunch();
 };
 
 export const checkDirectoryValidity = async (

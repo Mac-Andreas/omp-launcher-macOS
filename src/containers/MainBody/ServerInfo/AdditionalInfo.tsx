@@ -152,6 +152,7 @@ const AdditionalInfo = (props: IProps) => {
           id={themeType === "dark" ? "scroll" : "scroll-light"}
           data={rules}
           renderItem={renderRule}
+          contentContainerStyle={{ paddingRight: sc(12) }}
         />
       </View>
     </View>

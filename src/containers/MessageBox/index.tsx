@@ -31,24 +31,37 @@ const MessageBox = memo(() => {
     }
   }, [visible]);
 
-  const handleClose = useCallback(() => {
-    if (modalRef.current) {
-      modalRef.current.zoomOut?.(300).then(() => {
+  // dismissed = closed via the X or a click outside, i.e. no button chosen.
+  // Only then do we fire args.onClose so callers can treat it as a cancel
+  // (e.g. the audio-crash gate aborts the held launch). A button press passes
+  // dismissed=false so its own onPress is the sole action.
+  const handleClose = useCallback(
+    (dismissed = true) => {
+      const onClose = dismissed ? useMessageBox.getState().args?.onClose : undefined;
+      const finish = () => {
         hideMessageBox();
-      });
-    } else {
-      hideMessageBox();
-    }
-  }, [hideMessageBox]);
+        onClose?.();
+      };
+      if (modalRef.current) {
+        modalRef.current.zoomOut?.(300).then(finish);
+      } else {
+        finish();
+      }
+    },
+    [hideMessageBox]
+  );
 
   const handleButtonPress = useCallback(
     (button: any) => {
+      if (button.disabled) return;
+      // Some buttons update the same dialog in place and must not close it.
+      const shouldClose = button.closeOnPress !== false;
       try {
         button.onPress?.();
       } catch (error) {
         Log.error("Error in MessageBox button handler:", error);
       } finally {
-        handleClose();
+        if (shouldClose) handleClose(false);
       }
     },
     [handleClose]
@@ -62,7 +75,10 @@ const MessageBox = memo(() => {
 
     return {
       container: {
-        top: height / 2 - 90 - 25,
+        // Fixed estimate of half the box height so it sits centred. The
+        // vertical-button layout is taller (stacked buttons), so lift it more
+        // to keep its centre on the screen centre.
+        top: height / 2 - (args.verticalButtons ? 170 : 115),
         left: width / 2 - boxWidth / 2,
         width: boxWidth,
         backgroundColor: theme.secondary,
@@ -77,7 +93,9 @@ const MessageBox = memo(() => {
         width: boxWidth,
       },
       button: {
-        width: buttonWidth,
+        // In the vertical layout buttons fill the dialog width (minus the side
+        // padding) so long labels never truncate; otherwise use the fixed width.
+        width: args.verticalButtons ? Math.max(boxWidth - 60, 200) : buttonWidth,
         backgroundColor: theme.primary,
       },
     };
@@ -89,7 +107,7 @@ const MessageBox = memo(() => {
   }
 
   return (
-    <StaticModal onDismiss={handleClose}>
+    <StaticModal onDismiss={() => handleClose()}>
       <Animatable.View
         ref={modalRef}
         animation="zoomInUp"
@@ -114,9 +132,20 @@ const MessageBox = memo(() => {
             {args.description}
           </Text>
         </View>
-        <View style={[styles.buttonContainer, dynamicStyles.buttonContainer]}>
+        <View
+          style={[
+            styles.buttonContainer,
+            args.verticalButtons && styles.buttonContainerVertical,
+            dynamicStyles.buttonContainer,
+          ]}
+        >
           {args.buttons?.map((button, index) => {
-            const isPrimary = index === args.buttons.length - 1;
+            // Row layout: the last (rightmost) button is the primary action.
+            // Vertical layout: the first (top) button is, since the top of a
+            // stack reads as the recommended choice.
+            const isPrimary = args.verticalButtons
+              ? index === 0
+              : index === args.buttons.length - 1;
             return (
               <TouchableOpacity
                 key={`message-box-button-${button.title}-${index}`}
@@ -124,14 +153,28 @@ const MessageBox = memo(() => {
                   styles.button,
                   dynamicStyles.button,
                   isPrimary && styles.primaryButton,
+                  button.disabled && styles.disabledButton,
                 ]}
                 onPress={() => handleButtonPress(button)}
+                disabled={button.disabled}
                 accessible
                 accessibilityRole="button"
                 accessibilityLabel={button.title}
               >
-                <Text semibold color="#FFFFFF" size={2}>
+                <Text
+                  semibold
+                  color={button.disabled ? "#FFFFFF88" : "#FFFFFF"}
+                  size={2}
+                >
                   {button.title}
+                  {button.hint ? (
+                    // Native title attr renders an OS tooltip on hover. RNW maps
+                    // unknown props through, so this lands as a real <span title>.
+                    // @ts-ignore
+                    <Text size={1} color="#FFFFFFCC" title={button.hint}>
+                      {"  (?)"}
+                    </Text>
+                  ) : null}
                 </Text>
               </TouchableOpacity>
             );
@@ -139,7 +182,7 @@ const MessageBox = memo(() => {
         </View>
         <TouchableOpacity
           style={styles.closeButton}
-          onPress={handleClose}
+          onPress={() => handleClose()}
           accessible
           accessibilityRole="button"
           accessibilityLabel="Close dialog"
@@ -184,6 +227,14 @@ const styles = StyleSheet.create({
     height: 30,
     marginTop: 10,
   },
+  // Column layout for long button labels: auto height (no fixed 30px row),
+  // buttons centered and stacked.
+  buttonContainerVertical: {
+    flexDirection: "column",
+    flexWrap: "nowrap",
+    height: "auto",
+    gap: sc(8),
+  },
   button: {
     paddingHorizontal: sc(10),
     height: sc(36),
@@ -201,6 +252,9 @@ const styles = StyleSheet.create({
     },
     shadowOpacity: 0.25,
     shadowRadius: 3.84,
+  },
+  disabledButton: {
+    opacity: 0.4,
   },
   closeButton: {
     position: "absolute",

@@ -1,6 +1,8 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+#[cfg(target_os = "macos")]
+mod audio;
 mod cli;
 mod commands;
 mod constants;
@@ -29,7 +31,6 @@ use log::{error, info, LevelFilter};
 use std::fs;
 use tauri::api::path::app_data_dir;
 use tauri::Manager;
-use tauri::PhysicalSize;
 
 static URI_SCHEME_VALUE: Mutex<String> = Mutex::new(String::new());
 static NO_OMP_FLAG: Mutex<bool> = Mutex::new(false);
@@ -150,6 +151,7 @@ async fn handle_cli_args() -> Result<()> {
                     false,
                     false,
                     true,
+                    true,
                 )
                 .await
                 .map_err(|e| LauncherError::InternalError(e.to_string()))?;
@@ -220,6 +222,11 @@ async fn run_tauri_app() -> Result<()> {
             commands::prepare_macos_samp_files,
             commands::uninstall_macos_samp_files,
             commands::open_in_finder,
+            commands::open_audio_midi_setup,
+            commands::get_audio_output_info,
+            commands::set_audio_output_sample_rate,
+            commands::apply_audio_route_fix,
+            commands::restore_audio_route,
             commands::clear_samp_user_cache,
             commands::set_traffic_lights,
             commands::realign_traffic_lights,
@@ -241,7 +248,14 @@ fn setup_tauri_app(app: &mut tauri::App) -> std::result::Result<(), Box<dyn std:
     let handle = app.handle();
 
     if let Some(main_window) = app.get_window("main") {
-        main_window.set_min_size(Some(PhysicalSize::new(WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT)))?;
+        // Min size must be LOGICAL, not physical: PhysicalSize(1000,700) on a
+        // 2x Retina display is only 500x350 points, letting the user shrink the
+        // window until the settings tab bar clips. LogicalSize pins the real
+        // on-screen minimum regardless of scale factor.
+        main_window.set_min_size(Some(tauri::LogicalSize::new(
+            WINDOW_MIN_WIDTH,
+            WINDOW_MIN_HEIGHT,
+        )))?;
         // Hide the native traffic lights before the window is shown so the
         // loading splash has no window chrome — the frontend reveals them
         // again once the main UI is ready.

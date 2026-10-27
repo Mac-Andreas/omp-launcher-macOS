@@ -1,7 +1,7 @@
 {
   "name": "omp-launcher",
   "private": true,
-  "version": "1.6.3-arm-beta.1",
+  "version": "1.6.3-arm-beta.2",
   "type": "module",
   "homepage": "https://github.com/openmultiplayer/launcher",
   "author": "Amyr (iAmir) Ahmady (https://github.com/AmyrAhmady)",
@@ -14,7 +14,8 @@
     "tauri": "tauri",
     "start": "tauri dev",
     "release": "tauri build -t i686-pc-windows-msvc",
-    "installer": "cd src-tauri/nsis && makensis installer_manual.nsi"
+    "installer": "cd src-tauri/nsis && makensis installer_manual.nsi",
+    "pkg": "tauri build --target aarch64-apple-darwin && node scripts/copy-pkg.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

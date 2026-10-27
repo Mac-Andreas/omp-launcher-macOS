@@ -7,6 +7,7 @@ import { images } from "../../../constants/images";
 import { useDraggableItem } from "../../../hooks/draggable";
 import { useContextMenu } from "../../../states/contextMenu";
 import { useJoinServerPrompt } from "../../../states/joinServerPrompt";
+import { useServers } from "../../../states/servers";
 import { useTheme } from "../../../states/theme";
 import { PING_TIMEOUT_VALUE } from "../../../utils/query";
 import { sc } from "../../../utils/sizeScaler";
@@ -27,11 +28,13 @@ const ServerItem = memo((props: IProps) => {
   const lastPressTime = useRef(0);
   const { showPrompt, setServer } = useJoinServerPrompt();
   const { show: showContextMenu } = useContextMenu();
+  const { setSelected } = useServers();
 
   const { attributes, listeners, setNodeRef, isDragging, style } =
     useDraggableItem(`${server.ip}:${server.port}`, isDraggable);
 
   const onDoublePress = () => {
+    setSelected(undefined);
     setServer(server);
     showPrompt(true);
   };
@@ -202,14 +205,17 @@ const ServerItem = memo((props: IProps) => {
                 <View
                   style={[
                     styles.commonFieldContainer,
-                    styles.pingFieldContainer,
+                    styles.playersFieldContainer,
                   ]}
                 >
-                  <Text
-                    style={{ fontSize: sc(17) }}
-                    color={theme.textSecondary}
-                  >
-                    {server.ping === PING_TIMEOUT_VALUE ? "-" : server.ping}
+                  <Text style={{ fontSize: sc(17) }} color={theme.textPrimary}>
+                    {server.playerCount}
+                    <Text
+                      style={{ fontSize: sc(17) }}
+                      color={theme.textPrimary + "AA"}
+                    >
+                      /{server.maxPlayers}
+                    </Text>
                   </Text>
                 </View>
                 <View
@@ -225,17 +231,14 @@ const ServerItem = memo((props: IProps) => {
                 <View
                   style={[
                     styles.commonFieldContainer,
-                    styles.playersFieldContainer,
+                    styles.pingFieldContainer,
                   ]}
                 >
-                  <Text style={{ fontSize: sc(17) }} color={theme.textPrimary}>
-                    {server.playerCount}
-                    <Text
-                      style={{ fontSize: sc(17) }}
-                      color={theme.textPrimary + "AA"}
-                    >
-                      /{server.maxPlayers}
-                    </Text>
+                  <Text
+                    style={{ fontSize: sc(17) }}
+                    color={theme.textSecondary}
+                  >
+                    {server.ping === PING_TIMEOUT_VALUE ? "-" : server.ping}
                   </Text>
                 </View>
               </View>
@@ -273,9 +276,9 @@ const styles = StyleSheet.create({
     paddingRight: sc(10),
   },
   playersFieldContainer: {
-    paddingRight: 5,
+    paddingLeft: 5,
     width: 80,
-    alignItems: "flex-end",
+    alignItems: "flex-start",
   },
   pingFieldContainer: {
     width: 50,

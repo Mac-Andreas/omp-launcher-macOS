@@ -19,6 +19,12 @@ const Privacy = () => {
     checkTelemetryBackend().then(setBackendReachable);
   }, []);
 
+  // Opt-out: telemetry is on by default. Turning this off stops all sends
+  // immediately (sendTelemetry early-returns when telemetryEnabled is false).
+  const onToggle = (enabled: boolean) => {
+    setTelemetryEnabled(enabled);
+  };
+
   return (
     <ScrollView
       style={{ flex: 1 }}
@@ -76,7 +82,7 @@ const Privacy = () => {
               })}
             </Text>
           </View>
-          <IOSSwitch value={telemetryEnabled} onChange={setTelemetryEnabled} />
+          <IOSSwitch value={telemetryEnabled} onChange={onToggle} />
         </View>
       </View>
     </ScrollView>

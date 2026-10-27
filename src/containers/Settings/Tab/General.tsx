@@ -87,22 +87,29 @@ const BetaInfoButton = ({ theme }: { theme: ThemeColors }) => {
         <div
           style={{
             position: "absolute",
+            // Open above the icon, anchored to its left edge so the box grows
+            // rightward into the panel. `right: 0` grew it leftward off-screen
+            // (the icon sits near the panel's left edge), which clipped it to
+            // the window edge.
             bottom: sc(24),
-            right: 0,
+            left: 0,
             borderRadius: sc(6),
             border: `1px solid ${theme.textPrimary}22`,
             backgroundColor: theme.itemBackgroundColor,
-            padding: `${sc(6)}px ${sc(10)}px`,
+            boxShadow: "0 4px 12px rgba(0,0,0,0.4)",
+            padding: `${sc(9)}px ${sc(12)}px`,
             zIndex: 9999,
-            width: sc(230),
+            width: sc(250),
+            boxSizing: "border-box" as const,
             pointerEvents: "none",
             whiteSpace: "normal" as const,
-            lineHeight: "1.4",
+            fontSize: sc(13),
+            lineHeight: `${sc(18)}px`,
+            color: theme.textPrimary as string,
+            fontFamily: "Proxima Nova Regular",
           }}
         >
-          <Text size={1} color={theme.textPrimary}>
-            Beta builds may contain bugs or incomplete features.
-          </Text>
+          Beta builds may contain bugs or incomplete features.
         </div>
       )}
     </div>

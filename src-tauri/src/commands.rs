@@ -20,6 +20,7 @@ pub async fn inject(
     debug: bool,
     debug_detailed: bool,
     audio_fix: bool,
+    render_fix: bool,
 ) -> std::result::Result<(), String> {
     let actual_omp_file = if *crate::NO_OMP_FLAG.lock().unwrap() {
         ""
@@ -49,6 +50,7 @@ pub async fn inject(
         debug,
         debug_detailed,
         audio_fix,
+        render_fix,
     )
     .await
     {
@@ -475,6 +477,96 @@ pub fn open_in_finder(path: String) -> std::result::Result<(), String> {
         .map(|_| ())
         .map_err(|e| format!("Failed to open '{}': {}", path, e))
 }
+
+/// Open macOS Audio MIDI Setup so the user can set the output device's Format
+/// to 48000 Hz by hand — the fallback when the Audio fix couldn't set it.
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+pub fn open_audio_midi_setup() -> std::result::Result<(), String> {
+    std::process::Command::new("open")
+        .args(["-a", "Audio MIDI Setup"])
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("Failed to open Audio MIDI Setup: {}", e))
+}
+
+#[cfg(target_os = "windows")]
+#[tauri::command]
+pub fn open_audio_midi_setup() -> std::result::Result<(), String> {
+    Ok(())
+}
+
+/// Default audio output device info, used before launch to decide whether to
+/// warn about the macOS/CrossOver audio crash (high sample rate is the risk).
+/// Returns null when there's nothing to report (no device, or non-macOS).
+#[cfg(target_os = "macos")]
+#[tauri::command]
+pub fn get_audio_output_info() -> Option<serde_json::Value> {
+    crate::audio::default_output_device_info().map(|dev| {
+        serde_json::json!({
+            "name": dev.name,
+            "builtIn": dev.built_in,
+            "bluetooth": dev.bluetooth,
+            "sampleRate": dev.sample_rate,
+        })
+    })
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+pub fn get_audio_output_info() -> Option<serde_json::Value> {
+    None
+}
+
+/// Set the default output device's nominal sample rate (Hz) and return the rate
+/// it actually settled on. Backs the one-click "Set my audio to 44.1 kHz" button
+/// in the launch gate so the user doesn't have to open Audio MIDI Setup by hand.
+#[cfg(target_os = "macos")]
+#[tauri::command]
+pub fn set_audio_output_sample_rate(rate: u32) -> std::result::Result<u32, String> {
+    crate::audio::set_default_output_sample_rate(rate)
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+pub fn set_audio_output_sample_rate(_rate: u32) -> std::result::Result<u32, String> {
+    Err("unsupported".into())
+}
+
+/// Apply the audio route fix before launch: route Wine away from the built-in
+/// speaker driver that faults on Tahoe — to a real external device if one is
+/// present, else to our own aggregate device wrapping the speakers. Returns
+/// `{ previousUid, routedTo, createdAggregate }` so the caller can restore it
+/// when the game exits.
+#[cfg(target_os = "macos")]
+#[tauri::command]
+pub fn apply_audio_route_fix() -> std::result::Result<serde_json::Value, String> {
+    let route = crate::audio::apply_audio_route_fix()?;
+    Ok(serde_json::json!({
+        "previousUid": route.previous_uid,
+        "routedTo": route.routed_to,
+        "createdAggregate": route.created_aggregate,
+    }))
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+pub fn apply_audio_route_fix() -> std::result::Result<serde_json::Value, String> {
+    Err("unsupported".into())
+}
+
+/// Restore the output device changed by `apply_audio_route_fix` and destroy our
+/// aggregate if one was created. Best-effort; never errors so it can't block the
+/// post-game cleanup.
+#[cfg(target_os = "macos")]
+#[tauri::command]
+pub fn restore_audio_route(previous_uid: Option<String>, destroy_aggregate: bool) {
+    crate::audio::restore_audio_route(previous_uid.as_deref(), destroy_aggregate);
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+pub fn restore_audio_route(_previous_uid: Option<String>, _destroy_aggregate: bool) {}
 
 #[cfg(target_os = "windows")]
 #[tauri::command]

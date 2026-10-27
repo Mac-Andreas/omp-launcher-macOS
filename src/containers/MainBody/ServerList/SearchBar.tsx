@@ -29,6 +29,7 @@ interface ActionIconProps {
   icon: string;
   onPress: () => void;
   buttonColor?: string;
+  borderColor?: string;
   iconColor: string;
   iconSize: number;
   title: string;
@@ -36,7 +37,7 @@ interface ActionIconProps {
 }
 
 const ActionIcon = memo<ActionIconProps>(
-  ({ icon, onPress, buttonColor, iconColor, iconSize, title, svg }) => {
+  ({ icon, onPress, buttonColor, borderColor, iconColor, iconSize, title, svg }) => {
     const containerStyle = useMemo(
       () => ({
         filter: buttonColor
@@ -47,8 +48,15 @@ const ActionIcon = memo<ActionIconProps>(
     );
 
     const buttonStyle = useMemo(
-      () => [styles.rightSideIcons, { backgroundColor: buttonColor }],
-      [buttonColor]
+      () => [
+        styles.rightSideIcons,
+        {
+          backgroundColor: buttonColor,
+          borderWidth: borderColor ? 1 : 0,
+          borderColor: borderColor,
+        },
+      ],
+      [buttonColor, borderColor]
     );
 
     return (
@@ -162,7 +170,11 @@ const SearchBar = memo<SearchBarProps>(({ onChange }) => {
       <TouchableOpacity
         style={[
           styles.filterButton,
-          { backgroundColor: theme.itemBackgroundColor },
+          {
+            backgroundColor: theme.itemBackgroundColor,
+            borderWidth: 1,
+            borderColor: `${theme.textPrimary}26`,
+          },
         ]}
         onPress={handleFilterToggle}
       >
@@ -171,7 +183,7 @@ const SearchBar = memo<SearchBarProps>(({ onChange }) => {
           title={t("filter_servers")}
           image={images.icons.filter}
           size={sc(16)}
-          color={theme.textSecondary}
+          color={`${theme.textPrimary}99`}
         />
         {showFiltersBadge ? (
           <div
@@ -189,7 +201,11 @@ const SearchBar = memo<SearchBarProps>(({ onChange }) => {
       <View
         style={[
           styles.inputContainer,
-          { backgroundColor: theme.textInputBackgroundColor },
+          {
+            backgroundColor: theme.itemBackgroundColor,
+            borderWidth: 1,
+            borderColor: `${theme.textPrimary}26`,
+          },
         ]}
       >
         <View style={styles.searchIconContainer}>
@@ -197,12 +213,12 @@ const SearchBar = memo<SearchBarProps>(({ onChange }) => {
             svg
             image={images.icons.search}
             size={sc(16)}
-            color={theme.textSecondary}
+            color={`${theme.textPrimary}99`}
           />
         </View>
         <TextInput
           placeholder={t("search_for_server_hostname_mode")}
-          placeholderTextColor={theme.textSecondary}
+          placeholderTextColor={`${theme.textPrimary}55`}
           value={searchQuery}
           style={[styles.textInput, { color: theme.textPrimary }]}
           onChangeText={setSearchQuery}
@@ -229,7 +245,7 @@ const SearchBar = memo<SearchBarProps>(({ onChange }) => {
               icon={images.icons.play}
               iconSize={sc(22)}
               iconColor={"#FFFFFF"}
-              buttonColor={theme.primary}
+              buttonColor={`${theme.primary}88`}
               onPress={playSelectedServer}
             />
             <ActionIcon
@@ -240,8 +256,8 @@ const SearchBar = memo<SearchBarProps>(({ onChange }) => {
               }
               icon={favorited ? images.icons.favRemove : images.icons.favAdd}
               iconSize={sc(20)}
-              iconColor={"#FFFFFFDD"}
-              buttonColor={"#C8302F"}
+              iconColor={"#FFFFFF"}
+              buttonColor={"#6B2020"}
               onPress={toggleFavorite}
             />
           </>
@@ -251,8 +267,8 @@ const SearchBar = memo<SearchBarProps>(({ onChange }) => {
             title={t("clear_recently_joined_list")}
             icon={images.icons.clean}
             iconSize={sc(20)}
-            iconColor={"#78613F"}
-            buttonColor={"#F1C17A"}
+            iconColor={"#FFFFFF"}
+            buttonColor={"#7A6030"}
             onPress={handleClearRecentlyJoined}
           />
         )}
@@ -261,8 +277,8 @@ const SearchBar = memo<SearchBarProps>(({ onChange }) => {
           title={t("add_server")}
           icon={images.icons.add}
           iconSize={sc(18)}
-          iconColor={"#3B833D"}
-          buttonColor={"#7AF1AA"}
+          iconColor={"#FFFFFF"}
+          buttonColor={"#2D6B3A"}
           onPress={handleAddServer}
         />
         <ActionIcon
@@ -276,8 +292,9 @@ const SearchBar = memo<SearchBarProps>(({ onChange }) => {
             sideLists ? images.icons.closeSideLists : images.icons.openSideLists
           }
           iconSize={sc(18)}
-          iconColor={theme.textSecondary}
+          iconColor={`${theme.textPrimary}99`}
           buttonColor={theme.itemBackgroundColor}
+          borderColor={`${theme.textPrimary}26`}
           onPress={handleSideListsToggle}
         />
       </View>
@@ -316,7 +333,6 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     borderRadius: sc(5),
-    overflow: "hidden",
   },
   searchIconContainer: {
     height: "100%",
@@ -342,7 +358,8 @@ const styles = StyleSheet.create({
   actionButtonsContainer: {
     flexDirection: "row",
     alignItems: "center",
-    width: 200,
+    flex: 0.3,
+    marginLeft: sc(15),
     justifyContent: "flex-end",
   },
   rightSideIcons: {

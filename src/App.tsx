@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api";
+import { getVersion } from "@tauri-apps/api/app";
 import { t } from "i18next";
 import {
   appWindow,
@@ -21,6 +22,7 @@ import LaunchOverlay from "./containers/LaunchOverlay";
 import LoadingScreen from "./containers/LoadingScreen";
 import WindowTitleBar from "./containers/WindowTitleBar";
 import { changeLanguage } from "./locales";
+import { useFeedback } from "./states/feedback";
 import { useGenericPersistentState } from "./states/genericStates";
 import { useMessageBox } from "./states/messageModal";
 import { useNotification } from "./states/notification";
@@ -42,11 +44,10 @@ import PerformanceMonitor from "./utils/performance";
 import { PING_TIMEOUT_VALUE } from "./utils/query";
 import { sc } from "./utils/sizeScaler";
 import {
-  sendTelemetry,
   telemetrySessionStart,
   telemetrySessionEnd,
-  startHeartbeat,
-  stopHeartbeat,
+  telemetryDailyTick,
+  telemetryReportListSize,
 } from "./utils/telemetry";
 
 const MainView = lazy(() => import("./containers/MainBody"));
@@ -62,6 +63,7 @@ const MessageBox = lazy(() => import("./containers/MessageBox"));
 const Notification = lazy(() => import("./containers/Notification"));
 const ContextMenu = lazy(() => import("./containers/ServerContextMenu"));
 const SettingsModal = lazy(() => import("./containers/Settings"));
+const FeedbackPrompt = lazy(() => import("./containers/FeedbackPrompt"));
 
 const App = memo(() => {
   const [loading, setLoading] = useState(!IN_GAME);
@@ -112,12 +114,22 @@ const App = memo(() => {
       // Rust hides the traffic lights in setup() for first launch, but a
       // webview reload (e.g. Danger Zone → Reset) re-runs JS without
       // re-running setup, so re-hide them here too.
+      //
+      // Rust centers the window at its full 1000x700 frame before showing it,
+      // but here we shrink it to the small splash size. center() must run
+      // AFTER the resize settles, not alongside it — on macOS Tauri 1.x a
+      // concurrent center() reads the pre-resize frame and leaves the splash
+      // anchored at the old top-left (off-centre). Same hazard the main-window
+      // open path guards against below.
       await Promise.all([
         appWindow.setSize(new LogicalSize(250, 300)),
         appWindow.setResizable(false),
-        appWindow.center(),
         invoke("set_traffic_lights", { visible: false }),
       ]);
+      await appWindow.center();
+      requestAnimationFrame(() => {
+        appWindow.center();
+      });
 
       const { favorites, updateInFavoritesList } =
         usePersistentServers.getState();
@@ -146,14 +158,30 @@ const App = memo(() => {
     changeLanguage(language as any);
   }, [language]);
 
-  // Anonymous launch ping + session tracking (respects Privacy opt-out).
+  // Check once on launch whether the server has an active feedback campaign
+  // for this build. Nothing feedback-related renders until this resolves with
+  // a non-null campaign, so an empty/unreachable server shows no UI at all.
   useEffect(() => {
     if (IN_GAME) return;
-    sendTelemetry("app_launched");
+    useFeedback.getState().fetchCampaign();
+  }, []);
+
+  // Anonymous launch ping + session tracking. Only fires for users who have
+  // already granted consent for this build; a fresh install/update starts with
+  // consent unset, so nothing is sent here until they opt in via the startup
+  // gate (which then kicks off app_launched/session itself). Guards against
+  // leaking an event before the user decides — including old opt-out-era users
+  // upgrading, who still get re-asked.
+  useEffect(() => {
+    if (IN_GAME) return;
+    // Opt-out telemetry: on unless the user disabled it in Settings → Privacy.
+    // No consent prompt. Pushes yesterday's aggregated summary (if any) and
+    // counts this launch — usage accumulates locally until the daily tick.
+    if (!useSettings.getState().telemetryEnabled) return;
+    telemetryReportListSize(usePersistentServers.getState().favorites.length);
+    telemetryDailyTick();
     telemetrySessionStart("server_list");
-    startHeartbeat();
     return () => {
-      stopHeartbeat();
       telemetrySessionEnd();
     };
   }, []);
@@ -190,12 +218,19 @@ const App = memo(() => {
         setSampSetupPromptShown,
         bottleName,
         gtasaPath,
+        telemetryConsentVersion,
       } = useSettings.getState();
+
+      const appVersion = await getVersion().catch(() => "");
+      // Don't stack on top of the privacy gate — wait until it's resolved.
+      const consentPending =
+        !!appVersion && telemetryConsentVersion !== appVersion;
 
       if (
         sampSetupPromptShown ||
         bottleName ||
         gtasaPath ||
+        consentPending ||
         useMessageBox.getState().visible
       ) {
         return;
@@ -243,7 +278,10 @@ const App = memo(() => {
           },
         ],
       });
-    }, 500);
+      // Longer than the consent gate's timer so, on a fresh install where both
+      // could fire, the privacy opt-in is shown first and this one defers (its
+      // consentPending guard skips it while the gate is up).
+    }, 900);
 
     return () => {
       cancelled = true;
@@ -349,6 +387,7 @@ const App = memo(() => {
           <ExternalServerHandler />
           <Notification />
           <MessageBox />
+          <FeedbackPrompt />
           <LaunchOverlay />
         </View>
       </View>

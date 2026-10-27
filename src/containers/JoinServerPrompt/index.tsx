@@ -28,8 +28,7 @@ import { useJoinServerPrompt } from "../../states/joinServerPrompt";
 import { usePersistentServers, useServers } from "../../states/servers";
 import { useSettings } from "../../states/settings";
 import { useTheme } from "../../states/theme";
-import { detectInstalledSampVersion, startGame } from "../../utils/game";
-import { getSampVersionName } from "../../utils/helpers";
+import { startGame } from "../../utils/game";
 import { sc } from "../../utils/sizeScaler";
 import { SAMPDLLVersions } from "../../utils/types";
 
@@ -71,9 +70,7 @@ const JoinServerPrompt = () => {
   >();
   const [perServerNickname, setPerServerNickname] = useState("");
   const [copied, setCopied] = useState(false);
-  const [installedSamp, setInstalledSamp] = useState<SAMPDLLVersions | undefined>(
-    undefined
-  );
+
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { nickName, gtasaPath, sampVersion, setSampVersion } = useSettings();
 
@@ -104,29 +101,6 @@ const JoinServerPrompt = () => {
     setPassword(server && server.password ? server.password : "");
   }, [server]);
 
-  // Detect the SA-MP DLL actually sitting in the game folder so the dropdown
-  // can show an "INSTALLED" badge against the matching entry and default to
-  // it (instead of the generic "From GTASA Folder" placeholder) when neither
-  // a per-server nor global preference is set.
-  useEffect(() => {
-    let cancelled = false;
-    if (!visible || !gtasaPath) {
-      setInstalledSamp(undefined);
-      return;
-    }
-    detectInstalledSampVersion(gtasaPath)
-      .then((d) => {
-        if (cancelled) return;
-        if (d === "none" || d === "custom") setInstalledSamp(undefined);
-        else setInstalledSamp(d as SAMPDLLVersions);
-      })
-      .catch(() => {
-        if (!cancelled) setInstalledSamp(undefined);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [visible, gtasaPath]);
 
   // Clear pending copy reset on unmount / server change.
   useEffect(
@@ -309,23 +283,6 @@ const JoinServerPrompt = () => {
   ]);
 
   if (!visible) return null;
-
-  // Resolution order for the dropdown's current value:
-  //   1. explicit per-server pick
-  //   2. global setting if user has changed it from "custom"
-  //   3. the actually installed samp.dll version (if we managed to detect one)
-  // When the result is still "custom" (a samp.dll we can't pin to a known
-  // release), show the auto-detected version instead of "From GTASA Folder";
-  // if detection found nothing, show "Not detected".
-  const resolvedVersion: SAMPDLLVersions =
-    perServerVersion ??
-    (sampVersion !== "custom" ? sampVersion : installedSamp ?? sampVersion);
-  const displayVersion: SAMPDLLVersions =
-    resolvedVersion === "custom" ? installedSamp ?? "custom" : resolvedVersion;
-  const currentVersionName =
-    displayVersion === "custom"
-      ? t("samp_version_not_detected", { defaultValue: "Not detected" })
-      : getSampVersionName(displayVersion);
 
   return (
     <StaticModal onDismiss={() => showPrompt(false)}>
@@ -683,11 +640,23 @@ const JoinServerPrompt = () => {
 
           <View style={styles.field}>
             <View style={styles.labelRow}>
-              <Text semibold color={theme.textPrimary} size={2}>
-                {t("server_join_prompt_your_nickname", {
-                  defaultValue: "Your Nickname",
-                })}
-              </Text>
+              <View>
+                <Text semibold color={theme.textPrimary} size={2}>
+                  {t("server_join_prompt_your_nickname", {
+                    defaultValue: "Your Nickname",
+                  })}
+                </Text>
+                <Text size={1} color={`${theme.textPrimary}66`}>
+                  {t("server_join_prompt_nickname_hint", {
+                    defaultValue: "Personalise your nickname for this server.",
+                  })}
+                </Text>
+                <Text size={1} color={`${theme.textPrimary}66`}>
+                  {t("server_join_prompt_nickname_hint2", {
+                    defaultValue: "You will connect using this name.",
+                  })}
+                </Text>
+              </View>
               <Tooltip
                 text={
                   t("server_join_prompt_nickname_tooltip", {
@@ -726,28 +695,6 @@ const JoinServerPrompt = () => {
             ]}
           />
 
-          <View style={styles.field}>
-            <Text semibold color={theme.textPrimary} size={2}>
-              {t("samp_version")}
-            </Text>
-            <View
-              style={[
-                styles.sampPill,
-                styles.pillBordered,
-                dynamicStyles.pillPrimary,
-              ]}
-            >
-              <Icon
-                svg
-                image={images.icons.game}
-                size={sc(13)}
-                color={theme.primary}
-              />
-              <Text semibold color={theme.primary} size={1}>
-                {currentVersionName}
-              </Text>
-            </View>
-          </View>
         </View>
 
         <TouchableOpacity
@@ -1042,16 +989,6 @@ const styles = StyleSheet.create({
     borderRadius: sc(6),
     // @ts-ignore
     outlineStyle: "none",
-  },
-  sampPill: {
-    flexDirection: "row",
-    alignItems: "center",
-    alignSelf: "flex-start",
-    gap: sc(5),
-    marginTop: sc(8),
-    paddingVertical: sc(5),
-    paddingHorizontal: sc(12),
-    borderRadius: sc(999),
   },
   connectButton: {
     position: "absolute",

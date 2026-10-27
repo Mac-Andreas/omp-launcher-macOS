@@ -23,14 +23,12 @@ import {
 } from "./types";
 import { validateServerAddressIPv4 } from "./validation";
 
-// Server update configuration
 const SERVER_UPDATE_CONFIG = {
   BATCH_SIZE: 2,
   BATCH_DELAY: 2000,
   INITIAL_DELAY: 500,
 } as const;
 
-// Language filter configuration
 interface LanguageFilter {
   readonly name: string;
   readonly keywords: readonly string[];
@@ -88,16 +86,13 @@ export const fetchServers = async (cached: boolean = true): Promise<void> => {
   if (!cached) return;
 
   try {
-    // Import getCachedList from the API layer
     const { getCachedList } = await import("../api/apis");
 
-    // Update favorites in batches
     const { favorites } = usePersistentServers.getState();
     if (Array.isArray(favorites) && favorites.length > 0) {
       updateServersInBatches(favorites, "favorites");
     }
 
-    // Fetch and set servers through the API
     const response = await getCachedList();
     if (response.success && response.data.length > 0) {
       updateServersInBatches(response.data, "internet");
@@ -113,14 +108,8 @@ export const fetchServers = async (cached: boolean = true): Promise<void> => {
   }
 };
 
-// Compare two ARM-fork semver strings shaped "MAJOR.MINOR.PATCH[-arm.N]".
-// Returns true when `remote` is strictly newer than `local`. Anything that
-// doesn't match the expected shape compares as not-newer so we never prompt on
-// an upstream tag the launcher can't parse.
 const parseArmVersion = (v: string): number[] | null => {
-  // Accepts plain "1.6.3", stable arm "1.6.3-arm.N", and pre-release
-  // "1.6.3-arm-beta.N". Channel orders releases so beta < arm < plain, i.e. a
-  // beta tag never out-ranks the matching stable arm tag.
+  // beta < arm < plain stable, so a beta tag never out-ranks the matching stable arm tag
   const m = v.match(/^v?(\d+)\.(\d+)\.(\d+)(?:-arm(-beta)?\.(\d+))?$/);
   if (!m) return null;
   const channel = m[5] === undefined ? 2 : m[4] ? 0 : 1;
@@ -142,18 +131,11 @@ export const fetchUpdateInfo = async () => {
   const nativeVer = await getVersion();
   const hostOS = await type();
 
-  // Latest upstream (Windows) launcher release tag from openmultiplayer/launcher
-  // GitHub releases, shown in the About panel as "Upstream version". Best-effort:
-  // a failed fetch leaves the prior value (defaults to "—").
   const upstream = await getUpstreamLauncherVersion();
   if (upstream.data) {
     useAppState.getState().setUpstreamLauncherVersionValue(upstream.data);
   }
 
-  // api.open.mp/launcher is still the source of truth for the omp-client.dll
-  // checksum + download URL used during boot. The launcher self-update prompt
-  // is driven separately by this repo's GitHub releases (see below), so an
-  // upstream version bump cannot ship an ARM build to macOS users.
   const response = await getUpdateInfo();
   if (response.data) {
     const versionInfo = response.data.versions[useAppState.getState().version];
@@ -169,8 +151,6 @@ export const fetchUpdateInfo = async () => {
       }
     }
 
-    // Overwrite version/download/changelog with the fork release so the update
-    // modal only fires for our ARM tags.
     const fork = await getForkReleaseInfo();
     if (fork.data) {
       response.data.version = fork.data.version;
@@ -232,9 +212,6 @@ export const fetchUpdateInfo = async () => {
   Log.debug(response);
 };
 
-// Validation functions are now imported from ./validation.ts
-// This provides better separation of concerns and reusability
-
 export const getIpAddress = async (
   hostname: string
 ): Promise<string | null> => {
@@ -243,7 +220,6 @@ export const getIpAddress = async (
     return null;
   }
 
-  // Use validation function from validation.ts
   if (validateServerAddressIPv4(hostname)) {
     return hostname;
   }
@@ -268,21 +244,17 @@ const filterServers = (
   const loweredQuery = query.toLowerCase();
 
   return servers.filter((server) => {
-    // Basic validation
     if (!server.ip || !server.hostname) return false;
 
-    // Filter checks
     const ompCheck = !ompOnly || server.usingOmp;
     const partnershipCheck = !checkForPartnership || server.partner;
     const nonEmptyCheck = !nonEmpty || server.playerCount > 0;
     const unpasswordedCheck = !unpassworded || !server.hasPassword;
 
-    // Language check - optimized
     const languageCheck =
       !languages.length ||
       languages.some((lang) => checkLanguage(server.language, lang));
 
-    // Query check - search in hostname and gameMode
     const queryCheck =
       !query ||
       server.hostname.toLowerCase().includes(loweredQuery) ||
@@ -329,28 +301,19 @@ export const sortAndSearchInServerList = (
   searchData: SearchData,
   checkForPartnership = false
 ): Server[] => {
-  // Filter first
   let filteredServers = filterServers(servers, searchData, checkForPartnership);
 
-  // Apply sorting - order matters for performance
   const { sortPing, sortPlayer, sortName, sortMode } = searchData;
 
-  // Sort by ping (most common/important sort)
   if (sortPing !== "none") {
     filteredServers = applySorting(filteredServers, sortPing, "ping");
   }
-
-  // Sort by player count
   if (sortPlayer !== "none") {
     filteredServers = applySorting(filteredServers, sortPlayer, "playerCount");
   }
-
-  // Sort by hostname
   if (sortName !== "none") {
     filteredServers = applySorting(filteredServers, sortName, "hostname");
   }
-
-  // Sort by game mode
   if (sortMode !== "none") {
     filteredServers = applySorting(filteredServers, sortMode, "gameMode");
   }

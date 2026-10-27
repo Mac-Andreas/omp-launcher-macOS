@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Bundle/executable stay "omp-launcher" (from productName), but the
+	     name macOS shows in Spotlight, the menu bar and the app switcher
+	     comes from CFBundleDisplayName / CFBundleName. -->
+	<key>CFBundleDisplayName</key>
+	<string>Open Multiplayer — Launcher</string>
+	<key>CFBundleName</key>
+	<string>Open Multiplayer — Launcher</string>
+	<!-- Alternate names Spotlight matches against. Both dash variants so the
+	     em-dash display name and a plain-hyphen search both resolve. Intentionally
+	     omits the old "SAMP launcher" alias. -->
+	<key>CFBundleSpotlightAliases</key>
+	<array>
+		<string>Open Multiplayer — Launcher</string>
+		<string>Open Multiplayer - Launcher</string>
+		<string>omp-launcher</string>
+		<string>open.mp launcher</string>
+	</array>
+</dict>
+</plist>

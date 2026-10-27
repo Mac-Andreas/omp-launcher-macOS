@@ -142,13 +142,12 @@ fn restore_vorbis_proxy(game_dir: &Path) {
 // module-named backtrace — Wine dumps that unconditionally, regardless of
 // WINEDEBUG. DETAILED turns those traces back on plus module/dll/process
 // tracking: large files and a slower game, but a full trail of everything.
-// NOTE: temporary diagnostic — +mmdevapi,+coreaudio trace the audio device
-// init so the intermittent mmdevapi assert(!status) names the failing CoreAudio
-// device. These two channels are quiet outside the brief audio init, so logs
-// stay small. Revert once the culprit device is identified.
+// The mmdevapi assert(!status) crash is now identified (CoreAudio rejecting the
+// negotiated buffer format/period — see the Audio fix below), so STANDARD no
+// longer force-traces +mmdevapi,+coreaudio: those flooded logs to >1GB/session.
+// DETAILED still enables them for anyone diagnosing a new audio failure.
 #[cfg(not(target_os = "windows"))]
-const STANDARD_WINE_CHANNELS: &str =
-    "err+all,fixme-all,warn-all,trace-all,+mmdevapi,+coreaudio";
+const STANDARD_WINE_CHANNELS: &str = "err+all,fixme-all,warn-all,trace-all";
 #[cfg(not(target_os = "windows"))]
 const DETAILED_WINE_CHANNELS: &str =
     "+seh,+module,+loaddll,+process,+mmdevapi,+coreaudio,err+all,fixme+all";
@@ -233,6 +232,7 @@ pub async fn run_samp(
     debug: bool,
     detailed: bool,
     audio_fix: bool,
+    render_fix: bool,
 ) -> Result<()> {
     let game_dir = PathBuf::from(executable_dir);
     let wine_channels = if detailed {
@@ -412,6 +412,17 @@ pub async fn run_samp(
             .status();
         info!("[run_samp] reg add {}\\{} = {}", key, val, data);
     };
+    let reg_dword = |key: &str, val: &str, data: &str| {
+        let _ = Command::new(cxstart)
+            .arg("--bottle")
+            .arg(&bottle)
+            .args(["reg", "add", key, "/v", val, "/t", "REG_DWORD", "/d", data, "/f"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        info!("[run_samp] reg add (dword) {}\\{} = {}", key, val, data);
+    };
     let reg_del = |key: &str, val: &str| {
         let _ = Command::new(cxstart)
             .arg("--bottle")
@@ -446,6 +457,29 @@ pub async fn run_samp(
         reg_del("HKCU\\Software\\Wine\\DirectSound", "HardwareAcceleration");
         reg_del("HKCU\\Software\\Wine\\DirectSound", "DefaultSampleRate");
         reg_del("HKCU\\Software\\Wine\\DirectSound", "DefaultBitsPerSample");
+    }
+
+    // Render fix (Beta → Render fix). GTA SA is a Direct3D8 game; under Wine its
+    // D3D8 calls go through wined3d's GL backend. The recurring texture crash —
+    // an access violation deep in wined3d (0x7Bxxxxxx) while the game locks a
+    // surface into mapped/write-combined GPU memory (a 0xBCF4xxxx pointer in the
+    // EAX/EDX of the dump) — happens on the FBO offscreen-rendering path. Two
+    // wined3d registry knobs steer it off that path:
+    //   OffscreenRenderingMode=backbuffer — render to the backbuffer instead of
+    //     FBO-backed textures, the codepath that faults on the lock.
+    //   csmt=0 — disable the command-stream multithreading that races the lock
+    //     under heavy texture churn (the open.mp client streams many textures).
+    // We also pin MaxVersionGL so the backend doesn't pick a core-profile path
+    // GTA's fixed-function D3D8 emulation mishandles. Turning the fix off deletes
+    // these so wined3d returns to its (crashy on this hardware) defaults.
+    if render_fix {
+        reg("HKCU\\Software\\Wine\\Direct3D", "OffscreenRenderingMode", "backbuffer");
+        reg_dword("HKCU\\Software\\Wine\\Direct3D", "csmt", "0");
+        reg_dword("HKCU\\Software\\Wine\\Direct3D", "MaxVersionGL", "0x00030002");
+    } else {
+        reg_del("HKCU\\Software\\Wine\\Direct3D", "OffscreenRenderingMode");
+        reg_del("HKCU\\Software\\Wine\\Direct3D", "csmt");
+        reg_del("HKCU\\Software\\Wine\\Direct3D", "MaxVersionGL");
     }
 
     let exe_win = to_win_path(&exe_path).ok_or_else(|| {
@@ -551,6 +585,7 @@ pub async fn run_samp(
     _debug: bool,
     _detailed: bool,
     _audio_fix: bool,
+    _render_fix: bool,
 ) -> Result<()> {
     // Prepare the command to spawn the executable
     let target_game_exe = if custom_game_exe.len() > 0 {

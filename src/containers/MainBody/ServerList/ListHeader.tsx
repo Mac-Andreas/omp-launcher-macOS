@@ -63,28 +63,28 @@ const ListHeader = () => {
         }}
       >
         <Pressable
-          style={[styles.commonFieldContainer, styles.pingFieldContainer]}
+          style={[styles.commonFieldContainer, styles.playersFieldContainer]}
           onPress={() => {
-            setSearchData("sortPlayer", "none");
+            setSearchData("sortPing", "none");
             setSearchData("sortName", "none");
             setSearchData("sortMode", "none");
-            if (searchData.sortPing === "none") {
-              setSearchData("sortPing", "descending");
-            } else if (searchData.sortPing === "descending") {
-              setSearchData("sortPing", "ascending");
+            if (searchData.sortPlayer === "none") {
+              setSearchData("sortPlayer", "descending");
+            } else if (searchData.sortPlayer === "descending") {
+              setSearchData("sortPlayer", "ascending");
             } else {
-              setSearchData("sortPing", "none");
+              setSearchData("sortPlayer", "none");
             }
           }}
         >
-          {searchData.sortPing !== "none" && (
+          {searchData.sortPlayer !== "none" && (
             <Text
               bold
               size={4}
               color={theme.primary}
               style={{ marginRight: 2, top: -1 }}
             >
-              {searchData.sortPing === "descending" ? "↑" : "↓"}
+              {searchData.sortPlayer === "descending" ? "↑" : "↓"}
             </Text>
           )}
           <Text
@@ -92,7 +92,7 @@ const ListHeader = () => {
             style={{ fontSize: sc(17) }}
             color={theme.textSecondary}
           >
-            {t("ping")}
+            {t("players")}
           </Text>
         </Pressable>
 
@@ -130,28 +130,28 @@ const ListHeader = () => {
           </Text>
         </Pressable>
         <Pressable
-          style={[styles.commonFieldContainer, styles.playersFieldContainer]}
+          style={[styles.commonFieldContainer, styles.pingFieldContainer]}
           onPress={() => {
-            setSearchData("sortPing", "none");
+            setSearchData("sortPlayer", "none");
             setSearchData("sortName", "none");
             setSearchData("sortMode", "none");
-            if (searchData.sortPlayer === "none") {
-              setSearchData("sortPlayer", "descending");
-            } else if (searchData.sortPlayer === "descending") {
-              setSearchData("sortPlayer", "ascending");
+            if (searchData.sortPing === "none") {
+              setSearchData("sortPing", "descending");
+            } else if (searchData.sortPing === "descending") {
+              setSearchData("sortPing", "ascending");
             } else {
-              setSearchData("sortPlayer", "none");
+              setSearchData("sortPing", "none");
             }
           }}
         >
-          {searchData.sortPlayer !== "none" && (
+          {searchData.sortPing !== "none" && (
             <Text
               bold
               size={4}
               color={theme.primary}
               style={{ marginRight: 2, top: -1 }}
             >
-              {searchData.sortPlayer === "descending" ? "↑" : "↓"}
+              {searchData.sortPing === "descending" ? "↑" : "↓"}
             </Text>
           )}
           <Text
@@ -159,7 +159,7 @@ const ListHeader = () => {
             style={{ fontSize: sc(17) }}
             color={theme.textSecondary}
           >
-            {t("players")}
+            {t("ping")}
           </Text>
         </Pressable>
       </View>
@@ -193,9 +193,9 @@ const styles = StyleSheet.create({
     justifyContent: "flex-start",
   },
   playersFieldContainer: {
-    paddingRight: 5,
+    paddingLeft: 5,
     width: 80,
-    justifyContent: "flex-end",
+    justifyContent: "flex-start",
   },
   pingFieldContainer: {
     width: 50,

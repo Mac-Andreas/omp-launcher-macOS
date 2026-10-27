@@ -7,8 +7,8 @@
     "withGlobalTauri": false
   },
   "package": {
-    "productName": "Open Multiplayer",
-    "version": "1.6.3-arm-beta.1"
+    "productName": "omp-launcher",
+    "version": "1.6.3-arm-beta.2"
   },
   "tauri": {
     "allowlist": {
@@ -43,7 +43,7 @@
     },
     "bundle": {
       "active": true,
-      "targets": "all",
+      "targets": ["app"],
       "identifier": "mp.open.launcher",
       "icon": [
         "icons/32x32.png",

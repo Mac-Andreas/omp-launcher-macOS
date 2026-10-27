@@ -3,7 +3,7 @@ import { FileEntry } from "@tauri-apps/api/fs";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { StyleSheet, View } from "react-native";
 import { download } from "tauri-plugin-upload-api";
-import { getUpdateInfo } from "../../api/apis";
+import { getInjectorRelease, getUpdateInfo } from "../../api/apis";
 import Icon from "../../components/Icon";
 import Text from "../../components/Text";
 import { validFileChecksums } from "../../constants/app";
@@ -11,6 +11,7 @@ import { images } from "../../constants/images";
 import i18n from "../../locales";
 import { UpdateInfo, useAppState } from "../../states/app";
 import { useGenericPersistentState } from "../../states/genericStates";
+import { useSettings } from "../../states/settings";
 import { useTheme } from "../../states/theme";
 import { formatBytes } from "../../utils/helpers";
 import { Log } from "../../utils/logger";
@@ -31,6 +32,7 @@ enum LoadingStage {
   VALIDATING_FILES = "VALIDATING_FILES",
   DOWNLOADING_SAMP = "DOWNLOADING_SAMP",
   DOWNLOADING_OMP = "DOWNLOADING_OMP",
+  UPDATING_INJECTOR = "UPDATING_INJECTOR",
   EXTRACTING = "EXTRACTING",
   COMPLETE = "COMPLETE",
 }
@@ -61,6 +63,7 @@ const LoadingScreen = ({ onEnd }: LoadingScreenProps) => {
   useEffect(() => {
     const initializeApp = async () => {
       try {
+        invoke("request_documents_access").catch(() => {});
         setLoadingStage(LoadingStage.VALIDATING_FILES);
         setCurrentTask("Validating resources...");
         await validateResources();
@@ -187,7 +190,6 @@ const LoadingScreen = ({ onEnd }: LoadingScreenProps) => {
           });
         });
 
-        // Small delay to ensure file is fully written
         await new Promise((resolve) => setTimeout(resolve, 500));
         await processFileChecksums(false);
       } catch (error) {
@@ -216,7 +218,6 @@ const LoadingScreen = ({ onEnd }: LoadingScreenProps) => {
     async (checksums: string[]): Promise<boolean[]> => {
       const validationPromises: Promise<boolean>[] = [];
 
-      // Iterate through the Map entries
       for (const [_, resourceInfo] of validFileChecksums.entries()) {
         const validationPromise = (async () => {
           try {
@@ -298,12 +299,10 @@ const LoadingScreen = ({ onEnd }: LoadingScreenProps) => {
         const ompFolder = await path.join(dir, "omp");
         const ompFile = await path.join(ompFolder, "omp-client.dll");
 
-        // Ensure OMP folder exists
         if (!(await fs.exists(ompFolder))) {
           await fs.createDir(ompFolder, { recursive: true });
         }
 
-        // Check if OMP file exists and is valid
         if (await fs.exists(ompFile)) {
           const checksums: string[] = await invoke("get_checksum_of_files", {
             list: [ompFile],
@@ -318,7 +317,6 @@ const LoadingScreen = ({ onEnd }: LoadingScreenProps) => {
           }
         }
 
-        // Download OMP file if missing or outdated
         Log.info("Downloading OMP plugin...");
         await downloadOmpFile(ompFile, updateInfo.ompPluginDownload);
         return false; // Indicates we downloaded, need to continue processing
@@ -327,6 +325,48 @@ const LoadingScreen = ({ onEnd }: LoadingScreenProps) => {
         return true; // Continue without OMP plugin
       }
     }, [downloadOmpFile]);
+
+  const updateInjectorIfNeeded = useCallback(async (): Promise<void> => {
+    try {
+      const { injectorVersion, setInjectorVersion } = useSettings.getState();
+      const release = await getInjectorRelease();
+      if (!release.success || !release.data) return;
+
+      if (release.data.version === injectorVersion) {
+        const dir = await path.appLocalDataDir();
+        const dest = await path.join(dir, "injector.exe");
+        if (await fs.exists(dest)) return;
+      }
+
+      setLoadingStage(LoadingStage.UPDATING_INJECTOR);
+      setCurrentTask("Updating injector...");
+      resetDownloadState();
+
+      const dir = await path.appLocalDataDir();
+      const dest = await path.join(dir, "injector.exe");
+
+      abortController.current = new AbortController();
+      await new Promise<void>((resolve, reject) => {
+        download(release.data!.download, dest, (progress, total) => {
+          if (abortController.current?.signal.aborted) {
+            reject(new Error("Download aborted"));
+            return;
+          }
+          updateDownloadProgress(progress, total);
+          if (downloadedSize.current >= total) {
+            resolve();
+          }
+        });
+      });
+
+      setInjectorVersion(release.data.version);
+      Log.info(`[injector] updated to v${release.data.version}`);
+    } catch (error) {
+      Log.warn("Injector update check failed:", error);
+    } finally {
+      resetDownloadState();
+    }
+  }, [resetDownloadState, updateDownloadProgress]);
 
   const processFileChecksums = useCallback(
     async (isInitialLoad = true) => {
@@ -372,6 +412,7 @@ const LoadingScreen = ({ onEnd }: LoadingScreenProps) => {
         const ompVerificationComplete = await processOmpPluginVerification();
 
         if (ompVerificationComplete) {
+          await updateInjectorIfNeeded();
           finishLoading(isInitialLoad ? 1000 : 1);
         }
       } catch (error: any) {
@@ -389,6 +430,7 @@ const LoadingScreen = ({ onEnd }: LoadingScreenProps) => {
       validateFileChecksums,
       downloadSAMPFiles,
       processOmpPluginVerification,
+      updateInjectorIfNeeded,
       finishLoading,
     ]
   );
@@ -398,7 +440,6 @@ const LoadingScreen = ({ onEnd }: LoadingScreenProps) => {
       const dir = await path.appLocalDataDir();
       const sampPath = await path.join(dir, "samp");
 
-      // Check if SAMP directory exists
       if (!(await fs.exists(sampPath))) {
         Log.info("Creating SAMP directory");
         await fs.createDir(sampPath, { recursive: true });
@@ -406,7 +447,6 @@ const LoadingScreen = ({ onEnd }: LoadingScreenProps) => {
         return;
       }
 
-      // Check if archive exists and is valid
       const archive = await path.join(sampPath, "samp_clients.7z");
       if (await fs.exists(archive)) {
         try {
@@ -429,7 +469,6 @@ const LoadingScreen = ({ onEnd }: LoadingScreenProps) => {
         }
       }
 
-      // Archive doesn't exist or is invalid, download it
       Log.info("Archive missing or invalid, downloading");
       await downloadSAMPFiles(sampPath);
     } catch (error) {
@@ -510,7 +549,8 @@ const LoadingScreen = ({ onEnd }: LoadingScreenProps) => {
         </Text>
         <View style={styles.spacer} />
         {(loadingStage === LoadingStage.DOWNLOADING_SAMP ||
-          loadingStage === LoadingStage.DOWNLOADING_OMP) && (
+          loadingStage === LoadingStage.DOWNLOADING_OMP ||
+          loadingStage === LoadingStage.UPDATING_INJECTOR) && (
           <>
             <Text
               semibold
@@ -519,7 +559,9 @@ const LoadingScreen = ({ onEnd }: LoadingScreenProps) => {
             >
               {loadingStage === LoadingStage.DOWNLOADING_SAMP
                 ? "Downloading SAMP files:"
-                : "Downloading OMP plugin:"}
+                : loadingStage === LoadingStage.DOWNLOADING_OMP
+                ? "Downloading OMP plugin:"
+                : "Updating injector:"}
             </Text>
             {progressBar}
           </>

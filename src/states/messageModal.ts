@@ -6,9 +6,23 @@ export interface MessageBoxArgs {
   buttons: {
     title: string;
     onPress: () => void;
+    // Greyed out and non-interactive when true.
+    disabled?: boolean;
+    // By default a press closes the box; set false to keep it open (e.g. a
+    // step that updates the same dialog in place).
+    closeOnPress?: boolean;
+    // Optional tooltip shown on a small (?) marker next to the button label.
+    hint?: string;
   }[];
   boxWidth?: number;
   buttonWidth?: number;
+  // Stack buttons in a full-width vertical column instead of a horizontal row.
+  // Use when labels are long enough to truncate in the row layout.
+  verticalButtons?: boolean;
+  // Fired only when the box is dismissed without choosing a button (X or click
+  // outside). Lets a caller treat a dismiss as a cancel (e.g. abort a held
+  // launch). Not called when a button is pressed.
+  onClose?: () => void;
 }
 
 interface MessageModalState {

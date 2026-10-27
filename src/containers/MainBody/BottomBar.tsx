@@ -44,7 +44,7 @@ const PropInfo = ({
       title={iconTitle}
       image={icon}
       size={iconSize}
-      color={theme.textSecondary}
+      color={`${theme.textPrimary}99`}
     />
   );
 
@@ -53,7 +53,11 @@ const PropInfo = ({
       <View
         style={[
           styles.iconWrapper,
-          { backgroundColor: theme.itemBackgroundColor },
+          {
+            backgroundColor: theme.itemBackgroundColor,
+            borderWidth: 1,
+            borderColor: `${theme.textPrimary}26`,
+          },
         ]}
       >
         {iconComponent}

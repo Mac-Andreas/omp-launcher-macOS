@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Animated,
   Easing,
+  LayoutChangeEvent,
   Pressable,
   StyleSheet,
   View,
@@ -14,23 +15,18 @@ import Text from "./Text";
 interface HoldToConfirmButtonProps {
   label: string;
   holdingLabel?: string;
-  // Milliseconds the user must hold to fire `onConfirm`. Defaults to 3000.
   holdMs?: number;
   onConfirm: () => void;
-  // Use the destructive (red) palette. Otherwise uses theme.primary.
   danger?: boolean;
   disabled?: boolean;
-  // When true, shows a spinner + busyLabel and blocks interaction.
   busy?: boolean;
   busyLabel?: string;
 }
 
 const DANGER = "#A8443E";
+const DANGER_FILL = "#C75A52";
 const DEFAULT_HOLD_MS = 3000;
 
-// Hold-to-confirm button. Press and hold for `holdMs` to fire `onConfirm`.
-// Releasing before the timer completes cancels with no side effect. The
-// progress fill grows left-to-right while the press is active.
 const HoldToConfirmButton = ({
   label,
   holdingLabel,
@@ -41,15 +37,24 @@ const HoldToConfirmButton = ({
   busy,
   busyLabel,
 }: HoldToConfirmButtonProps) => {
-  const { theme } = useTheme();
+  const { theme, themeType } = useTheme();
   const [holding, setHolding] = useState(false);
+  const [buttonWidth, setButtonWidth] = useState(0);
   const fill = useRef(new Animated.Value(0)).current;
   const fired = useRef(false);
   const anim = useRef<Animated.CompositeAnimation | null>(null);
 
   const blocked = !!disabled || !!busy;
   const baseColor = danger ? DANGER : theme.primary;
-  const fillColor = danger ? "#C75A52" : `${theme.primary}DD`;
+  const isLight = themeType === "light";
+
+  // Active button: solid dark-red bg + white text in light mode; tinted in dark mode
+  const activeBg = danger && isLight ? DANGER : `${baseColor}22`;
+  const activeText = danger && isLight ? "#FFFFFF" : baseColor;
+  // Fill bar: lighter red that's still clearly visible over the solid bg
+  const fillColor = danger ? DANGER_FILL : `${theme.primary}DD`;
+  const disabledBg = "#888888";
+  const disabledText = `${theme.textPrimary}88`;
 
   useEffect(
     () => () => {
@@ -87,46 +92,77 @@ const HoldToConfirmButton = ({
 
   const widthInterp = fill.interpolate({
     inputRange: [0, 1],
-    outputRange: ["0%", "100%"],
+    outputRange: [0, buttonWidth],
   });
+
+  const displayLabel = busy ? busyLabel || label : label;
+  const overlayLabel = holding && holdingLabel ? holdingLabel : displayLabel;
+
+  const onLayout = (e: LayoutChangeEvent) => {
+    setButtonWidth(e.nativeEvent.layout.width);
+  };
+
+  // In light mode with danger active: base text is white (already visible on red bg).
+  // In dark mode or non-danger: base text is the accent color, white overlay on fill.
+  const needsWhiteOverlay = !(danger && isLight);
 
   return (
     <Pressable
       disabled={blocked}
       onPressIn={startHold}
       onPressOut={cancelHold}
+      onLayout={onLayout}
       style={[
         styles.button,
         {
-          backgroundColor: blocked ? "#666666" : `${baseColor}33`,
-          borderColor: blocked ? "#666666" : baseColor,
-          opacity: blocked ? 0.6 : 1,
+          backgroundColor: blocked ? disabledBg : activeBg,
+          borderColor: blocked ? disabledBg : baseColor,
+          opacity: blocked ? 0.65 : 1,
           // @ts-ignore
           cursor: blocked ? "not-allowed" : "pointer",
         },
       ]}
     >
-      {!busy && (
+      {/* Fill bar — only when active */}
+      {!busy && !blocked && (
         <Animated.View
-          style={[
-            styles.fill,
-            {
-              backgroundColor: fillColor,
-              width: widthInterp,
-            },
-          ]}
+          style={[styles.fill, { backgroundColor: fillColor, width: widthInterp }]}
         />
       )}
-      <View style={[styles.labelWrap, styles.labelRow]}>
-        {busy && <ActivityIndicator size="small" color="#FFFFFF" />}
-        <Text semibold size={2} color="#FFFFFF">
-          {busy
-            ? busyLabel || label
-            : holding && holdingLabel
-            ? holdingLabel
-            : label}
+
+      {/* Base label */}
+      <View
+        style={[styles.labelLayer, buttonWidth ? { width: buttonWidth } : {}]}
+        pointerEvents="none"
+      >
+        {busy && (
+          <ActivityIndicator
+            size="small"
+            color={blocked ? disabledText : activeText}
+          />
+        )}
+        <Text
+          semibold
+          size={2}
+          color={blocked ? disabledText : activeText}
+        >
+          {displayLabel}
         </Text>
       </View>
+
+      {/* White overlay label clipped to filled region (dark mode / non-danger only) */}
+      {!busy && !blocked && needsWhiteOverlay && buttonWidth > 0 && (
+        <Animated.View
+          style={[styles.fill, styles.clipLayer, { width: widthInterp }]}
+          pointerEvents="none"
+        >
+          <View style={[styles.labelLayer, { width: buttonWidth }]}>
+            <Text semibold size={2} color="#FFFFFF">
+              {overlayLabel}
+            </Text>
+          </View>
+        </Animated.View>
+      )}
     </Pressable>
   );
 };
@@ -148,14 +184,17 @@ const styles = StyleSheet.create({
     left: 0,
     bottom: 0,
   },
-  labelWrap: {
-    paddingHorizontal: sc(12),
-    zIndex: 1,
+  clipLayer: {
+    overflow: "hidden",
+    justifyContent: "center",
+    alignItems: "center",
   },
-  labelRow: {
+  labelLayer: {
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "center",
     gap: sc(8),
+    paddingHorizontal: sc(12),
   },
 });
 

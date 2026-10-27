@@ -18,13 +18,14 @@ import { useSettingsModal } from "../../states/settingsModal";
 import { useTheme } from "../../states/theme";
 import { sc } from "../../utils/sizeScaler";
 import Advanced from "./Tab/Advanced";
+import Beta from "./Tab/Beta";
 import General from "./Tab/General";
 import Languages from "./Tab/Languages";
 import License from "./Tab/License";
 import Privacy from "./Tab/Privacy";
 import i18n from "../../locales";
 
-const MODAL_MAX_WIDTH = 720;
+const MODAL_MAX_WIDTH = 800;
 const MODAL_MAX_HEIGHT = 540;
 const TITLEBAR_HEIGHT = 25;
 // Keep the modal off the window edges when the window is small / tiled.
@@ -36,6 +37,7 @@ type TabType =
   | "languages"
   | "advanced"
   | "privacy"
+  | "beta"
   | "license";
 
 const SettingsModal = () => {
@@ -68,6 +70,11 @@ const SettingsModal = () => {
         icon: images.icons.locked,
       },
       {
+        label: t("settings_tab_beta", { defaultValue: "Beta" }),
+        type: "beta",
+        icon: images.icons.warning,
+      },
+      {
         label: t("settings_tab_credits", { defaultValue: "Credits" }),
         type: "license",
         icon: images.icons.partner,
@@ -83,6 +90,7 @@ const SettingsModal = () => {
       advanced: <Advanced />,
       license: <License />,
       privacy: <Privacy />,
+      beta: <Beta />,
     }),
     []
   );

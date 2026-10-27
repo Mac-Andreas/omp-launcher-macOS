@@ -277,7 +277,12 @@ const License = () => {
               },
             ]}
           >
-            <Text size={1} color={`${theme.textPrimary}99`} style={styles.creditRole}>
+            <Text
+              size={1}
+              color={`${theme.textPrimary}99`}
+              style={styles.creditRole}
+              numberOfLines={1}
+            >
               {c.role}
             </Text>
             <Text size={2} semibold color={theme.textPrimary} style={styles.creditName}>
@@ -286,7 +291,7 @@ const License = () => {
             <Icon
               svg
               image={images.icons.external}
-              size={sc(10)}
+              size={sc(15)}
               color={theme.primary}
             />
           </Pressable>
@@ -450,10 +455,12 @@ const styles = StyleSheet.create({
     cursor: "pointer",
   },
   creditRole: {
-    width: sc(120),
+    // Takes the flexible space so the name is pushed to the right edge. Was a
+    // fixed sc(120) which truncated "open.mp developers" to "open.mp develop…".
+    flex: 1,
   },
   creditName: {
-    flex: 1,
+    textAlign: "right",
   },
   acceptedBanner: {
     flexDirection: "row",

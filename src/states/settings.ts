@@ -28,9 +28,18 @@ interface SettingsPersistentState {
   // macOS audio crash fix (DirectSound emulation + fixed 48kHz/16-bit format).
   // On by default; turning it off reverts to Wine's default audio negotiation.
   audioFix: boolean;
-  // Anonymous usage telemetry. On by default; the Privacy section lets users
-  // opt out. Nothing identifying is sent — only a random per-install id.
+  // macOS render crash fix (wined3d backbuffer offscreen mode, csmt off, pinned
+  // GL version). On by default; steers GTA's D3D8 off the wined3d texture-lock
+  // path that faults under CrossOver. Off reverts to Wine's defaults.
+  renderFix: boolean;
+  // Anonymous usage telemetry. Opt-out: on by default, no startup prompt. Only
+  // a once-per-day aggregated summary is sent (counts + time averages), never
+  // anything identifying — just a random per-install id. Users can turn it off
+  // in Settings → Privacy, which stops all sends immediately.
   telemetryEnabled: boolean;
+  // Retained for migration only — the consent prompt was removed when telemetry
+  // moved to opt-out. No longer gates sending.
+  telemetryConsentVersion: string;
   setNickName: (name: string) => void;
   setGTASAPath: (path: string) => void;
   setCustomGameExe: (fileName: string) => void;
@@ -41,7 +50,9 @@ interface SettingsPersistentState {
   setDebugMode: (enabled: boolean) => void;
   setDebugDetailed: (enabled: boolean) => void;
   setAudioFix: (enabled: boolean) => void;
+  setRenderFix: (enabled: boolean) => void;
   setTelemetryEnabled: (enabled: boolean) => void;
+  setTelemetryConsentVersion: (version: string) => void;
 }
 
 const emitWithDelay = (event: string, payload: any) =>
@@ -61,7 +72,9 @@ const useSettings = create<SettingsPersistentState>()(
       debugMode: false,
       debugDetailed: false,
       audioFix: true,
+      renderFix: true,
       telemetryEnabled: true,
+      telemetryConsentVersion: "",
       setNickName: (name) =>
         set(() => {
           emitWithDelay("setNickName", name);
@@ -76,7 +89,10 @@ const useSettings = create<SettingsPersistentState>()(
       setDebugMode: (enabled) => set({ debugMode: enabled }),
       setDebugDetailed: (enabled) => set({ debugDetailed: enabled }),
       setAudioFix: (enabled) => set({ audioFix: enabled }),
+      setRenderFix: (enabled) => set({ renderFix: enabled }),
       setTelemetryEnabled: (enabled) => set({ telemetryEnabled: enabled }),
+      setTelemetryConsentVersion: (version) =>
+        set({ telemetryConsentVersion: version }),
     }),
     {
       name: "settings-storage",
