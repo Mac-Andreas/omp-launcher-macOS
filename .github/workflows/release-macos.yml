@@ -1,0 +1,68 @@
+name: "macOS release"
+
+# Builds the Apple Silicon .pkg and, for a v<upstream>-arm[-beta].N tag,
+# publishes it as a pre-release. Run it by hand to build without releasing.
+on:
+  push:
+    tags:
+      - "v*-arm*"
+  workflow_dispatch:
+
+jobs:
+  macos-pkg:
+    name: macOS pkg (Apple Silicon)
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: yarn
+
+      # Same nightly as local builds (no nightly-only features are used, but
+      # pinning keeps CI and local packages built by the same compiler).
+      - name: Rust toolchain
+        run: |
+          rustup toolchain install nightly-2026-08-08 --profile minimal --target aarch64-apple-darwin
+          rustup default nightly-2026-08-08
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Build and package
+        run: yarn pkg
+
+      - name: Locate package
+        id: pkg
+        run: |
+          pkg=$(ls dist/omp-launcher_*_aarch64.pkg)
+          echo "path=$pkg" >> "$GITHUB_OUTPUT"
+          echo "name=$(basename "$pkg")" >> "$GITHUB_OUTPUT"
+          echo "sha256=$(shasum -a 256 "$pkg" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: omp-launcher-macos-pkg
+          path: ${{ steps.pkg.outputs.path }}
+
+      - name: Release notes
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          sed -e "s/{{VERSION}}/${{ steps.pkg.outputs.version }}/g" \
+              -e "s/{{PKG}}/${{ steps.pkg.outputs.name }}/g" \
+              -e "s/{{SHA256}}/${{ steps.pkg.outputs.sha256 }}/g" \
+              .github/macos-release-notes.md > release-notes.md
+
+      - name: Publish pre-release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "open.mp Launcher ${{ steps.pkg.outputs.version }} — macOS (Apple Silicon) [Beta]"
+          prerelease: true
+          body_path: release-notes.md
+          generate_release_notes: true
+          files: ${{ steps.pkg.outputs.path }}
