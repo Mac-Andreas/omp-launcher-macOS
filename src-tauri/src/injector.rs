@@ -544,8 +544,11 @@ pub async fn run_samp(
     // GASP table turns grayscale off at these small sizes, so the text comes
     // out aliased: hard pixel edges inside SA-MP's black outline. Windows
     // defaults to ClearType, which ignores GASP — set the same in the bottle
-    // (type 2, gamma 1400, RGB). The game exe also prefers Microsoft's native
-    // d3dx9_25.dll when the bottle has it (AppDefaults, not bottle-wide).
+    // (type 2, gamma 1400, RGB). The game exe is also pinned to Wine's builtin
+    // d3dx9_25 (AppDefaults, not bottle-wide): Microsoft's native DLL, which the
+    // bottle otherwise loads from system32, draws a stray column of the
+    // neighbouring cached glyph next to some letters under Wine ("R|egister",
+    // "Mac|Andreas"), while the builtin one renders the same text cleanly.
     // Turning the fix off restores the bottle's grayscale defaults.
     let desktop = "HKCU\\Control Panel\\Desktop";
     let d3dx_overrides = format!(
@@ -557,7 +560,7 @@ pub async fn run_samp(
         reg_dword(desktop, "FontSmoothingType", "2");
         reg_dword(desktop, "FontSmoothingGamma", "0x578");
         reg_dword(desktop, "FontSmoothingOrientation", "1");
-        reg(&d3dx_overrides, "d3dx9_25", "native,builtin");
+        reg(&d3dx_overrides, "d3dx9_25", "builtin");
     } else {
         reg_dword(desktop, "FontSmoothingType", "1");
         reg_dword(desktop, "FontSmoothingGamma", "0");
