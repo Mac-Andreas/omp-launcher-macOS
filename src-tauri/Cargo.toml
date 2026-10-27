@@ -1,6 +1,6 @@
 [package]
 name = "omp-launcher"
-version = "1.7.0-arm-beta.1"
+version = "1.7.0-arm-beta.2"
 description = "Open Multiplayer Launcher"
 authors = ["Amyr Ahmady (iAmir)"]
 license = ""
