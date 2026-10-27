@@ -536,6 +536,8 @@ export const startGame = async (
     .finally(() => {
         const POLL_MS = 800;
       const TIMEOUT_MS = 30_000;
+      // How long to keep trying to bring the game window to the front.
+      const FOCUS_TIMEOUT_MS = 60_000;
       const start = Date.now();
 
       // Re-fire the launch after an early audio/connect crash. Returns true if
@@ -575,6 +577,20 @@ export const startGame = async (
         if (running) {
           setLaunching(false);
           const gameStart = Date.now();
+          // Put the game in front of the launcher. The process shows up before
+          // Wine opens its window, so retry until there is a window to raise.
+          const focusGame = async () => {
+            let focused = false;
+            try {
+              focused = (await invoke<boolean>("focus_game_window")) === true;
+            } catch {
+              // retry
+            }
+            if (!focused && Date.now() - gameStart < FOCUS_TIMEOUT_MS) {
+              setTimeout(focusGame, 1_000);
+            }
+          };
+          focusGame();
           const watchExit = async () => {
             let stillRunning = false;
             try {

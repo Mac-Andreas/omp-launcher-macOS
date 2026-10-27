@@ -176,6 +176,61 @@ pub fn is_game_running() -> bool {
     sys.processes().values().any(|p| helpers::is_game_process(p))
 }
 
+/// Bring the running game to the front, behind which the launcher drops back.
+/// Wine turns the game process into a regular macOS app once it shows its
+/// window; until then there is nothing to raise, so this returns false and the
+/// caller retries. Not async: Tauri v1 runs sync commands on the main thread,
+/// which AppKit's activation calls need.
+#[tauri::command]
+pub fn focus_game_window() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        use objc::runtime::{Object, BOOL, NO};
+        use objc::{class, msg_send, sel, sel_impl};
+        use sysinfo::System;
+
+        // NSApplicationActivationPolicyRegular / NSApplicationActivateAllWindows.
+        const POLICY_REGULAR: i64 = 0;
+        const ACTIVATE_ALL_WINDOWS: u64 = 1;
+
+        let mut sys = System::new();
+        sys.refresh_processes();
+        for (pid, process) in sys.processes() {
+            if !helpers::is_game_process(process) {
+                continue;
+            }
+            unsafe {
+                let app: *mut Object = msg_send![
+                    class!(NSRunningApplication),
+                    runningApplicationWithProcessIdentifier: pid.as_u32() as i32
+                ];
+                if app.is_null() {
+                    continue;
+                }
+                let policy: i64 = msg_send![app, activationPolicy];
+                if policy != POLICY_REGULAR {
+                    continue;
+                }
+                // macOS 14+ only lets an app take focus that the active app
+                // (the launcher) yields to it.
+                let ns_app: *mut Object = msg_send![class!(NSApplication), sharedApplication];
+                let can_yield: BOOL =
+                    msg_send![ns_app, respondsToSelector: sel!(yieldActivationToApplication:)];
+                if can_yield != NO {
+                    let _: () = msg_send![ns_app, yieldActivationToApplication: app];
+                }
+                let _: BOOL = msg_send![app, activateWithOptions: ACTIVATE_ALL_WINDOWS];
+                return true;
+            }
+        }
+        false
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        false
+    }
+}
+
 #[derive(serde::Serialize)]
 pub struct MacosHealth {
     /// CrossOver is installed and its launch tool is available.

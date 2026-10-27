@@ -277,6 +277,7 @@ async fn run_tauri_app() -> Result<()> {
             commands::get_checksum_of_files,
             commands::kill_game,
             commands::is_game_running,
+            commands::focus_game_window,
             commands::get_macos_health,
             commands::list_bottles,
             commands::extract_7z,
