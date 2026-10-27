@@ -1,6 +1,12 @@
-import { memo, useCallback, useEffect, useMemo } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next"; // ✅ use this instead
-import { StyleSheet, TextInput, View } from "react-native";
+import {
+  Pressable,
+  StyleSheet,
+  Text as RNText,
+  TextInput,
+  View,
+} from "react-native";
 import Icon from "../components/Icon";
 import TabBar from "../components/TabBar";
 import Text from "../components/Text";
@@ -16,7 +22,7 @@ import { ListType } from "../utils/types";
 const NavBar = memo(() => {
   const { t, i18n } = useTranslation();
   const { theme } = useTheme();
-  const { nickName, setNickName } = useSettings();
+  const { nickName, setNickName, recentNicknames } = useSettings();
   const { setListType, listType } = useGenericTempState();
   const nicknameRequired = useNicknameAlert((s) => s.required);
   const clearNicknameAlert = useNicknameAlert((s) => s.clear);
@@ -32,6 +38,28 @@ const NavBar = memo(() => {
     const id = setTimeout(clearNicknameAlert, 6000);
     return () => clearTimeout(id);
   }, [nicknameRequired, clearNicknameAlert]);
+
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const openDropdown = useCallback(() => {
+    if (hideTimer.current) clearTimeout(hideTimer.current);
+    setDropdownOpen(true);
+  }, []);
+
+  const closeDropdown = useCallback(() => {
+    if (hideTimer.current) clearTimeout(hideTimer.current);
+    hideTimer.current = setTimeout(() => setDropdownOpen(false), 150);
+  }, []);
+
+  const handleRecentNicknamePress = useCallback(
+    (name: string) => {
+      setNickName(name);
+      if (hideTimer.current) clearTimeout(hideTimer.current);
+      setDropdownOpen(false);
+    },
+    [setNickName]
+  );
 
   const tabList = useMemo(
     () => [
@@ -140,14 +168,47 @@ const NavBar = memo(() => {
             size={sc(16)}
             color={`${theme.textPrimary}99`}
           />
-          <TextInput
-            value={nickName}
-            onChangeText={handleNicknameChange}
-            placeholder={`${t("nickname")}...`}
-            placeholderTextColor={theme.textSecondary}
-            // @ts-ignore — RN-Web TextInput supports outlineStyle
-            style={dynamicStyles.nicknameInput}
-          />
+          <View style={styles.nicknameInputWrapper}>
+            <TextInput
+              value={nickName}
+              onChangeText={handleNicknameChange}
+              onFocus={openDropdown}
+              onBlur={closeDropdown}
+              placeholder={`${t("nickname")}...`}
+              placeholderTextColor={theme.textSecondary}
+              // @ts-ignore — RN-Web TextInput supports outlineStyle
+              style={dynamicStyles.nicknameInput}
+            />
+            {dropdownOpen && recentNicknames.length > 0 && (
+              <View
+                style={[
+                  styles.dropdown,
+                  {
+                    backgroundColor: theme.itemBackgroundColor,
+                    borderColor: theme.textSecondary,
+                  },
+                ]}
+              >
+                {recentNicknames.map((name) => (
+                  <Pressable
+                    key={name}
+                    onPress={() => handleRecentNicknamePress(name)}
+                    style={styles.dropdownItem}
+                  >
+                    <RNText
+                      numberOfLines={1}
+                      style={[
+                        styles.dropdownItemText,
+                        { color: theme.textPrimary },
+                      ]}
+                    >
+                      {name}
+                    </RNText>
+                  </Pressable>
+                ))}
+              </View>
+            )}
+          </View>
         </View>
       </View>
     </View>
@@ -180,6 +241,28 @@ const styles = StyleSheet.create({
     height: sc(35),
     flexDirection: "row",
     alignItems: "center",
+  },
+  nicknameInputWrapper: {
+    position: "relative",
+    height: "100%",
+  },
+  dropdown: {
+    position: "absolute",
+    top: sc(36),
+    left: 0,
+    width: sc(160),
+    borderRadius: sc(5),
+    borderWidth: 1,
+    overflow: "hidden",
+    zIndex: 100,
+  },
+  dropdownItem: {
+    paddingHorizontal: sc(8),
+    paddingVertical: sc(7),
+  },
+  dropdownItemText: {
+    fontFamily: "Proxima Nova Regular",
+    fontSize: sc(15),
   },
   nicknameIconContainer: {
     height: sc(35),

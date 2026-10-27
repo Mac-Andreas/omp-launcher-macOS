@@ -16,6 +16,7 @@ import { Line } from "react-chartjs-2";
 import { StyleProp, View, ViewStyle } from "react-native";
 import { useServers } from "../states/servers";
 import { useTheme } from "../states/theme";
+import { pingColor } from "../utils/pingColor";
 
 ChartJS.register(
   CategoryScale,
@@ -73,7 +74,7 @@ interface ChartProps {
 
 const Chart = memo<ChartProps>(({ containerStyle }) => {
   const { selected } = useServers();
-  const { theme } = useTheme();
+  const { theme, themeType } = useTheme();
   const selectedServerAddr = useRef<string>("");
   const pingList = useRef<number[]>(Array(MAX_PING_ELEMENTS).fill(0));
 
@@ -112,12 +113,25 @@ const Chart = memo<ChartProps>(({ containerStyle }) => {
       pingList.current.shift();
       pingList.current.push(selected.ping);
 
+      // Each point, and the line leading into it, takes its ping band's
+      // colour; empty slots (0, no sample yet) stay neutral.
+      const pings = [...pingList.current];
+      const colors = pings.map(
+        (ping) => pingColor(ping, themeType) ?? `${theme.textPrimary}40`
+      );
+
       return {
         labels,
         datasets: [
           {
-            data: [...pingList.current],
+            data: pings,
             ...chartStyle,
+            pointBorderColor: colors,
+            pointHoverBorderColor: colors,
+            segment: {
+              borderColor: (ctx: { p1DataIndex: number }) =>
+                colors[ctx.p1DataIndex],
+            },
           },
         ],
       } as ChartData<"line", number[], string>;
@@ -132,7 +146,7 @@ const Chart = memo<ChartProps>(({ containerStyle }) => {
         },
       ],
     } as ChartData<"line", number[], string>;
-  }, [selected?.ping, chartStyle, resetPingData]);
+  }, [selected?.ping, chartStyle, resetPingData, themeType, theme.textPrimary]);
 
   return (
     <View style={containerStyle}>

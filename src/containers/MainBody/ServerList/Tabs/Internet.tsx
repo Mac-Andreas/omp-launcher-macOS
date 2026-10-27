@@ -23,8 +23,14 @@ const Internet = () => {
     return sortAndSearchInServerList(servers, searchData);
   }, [servers, searchData]);
 
+  // Selecting the already-selected server again clears the selection (row
+  // re-click and Esc both go through here).
   const onSelect = (server: Server) => {
     stopQuery();
+    if (selected && selected.ip === server.ip && selected.port === server.port) {
+      setSelected(undefined);
+      return;
+    }
     setSelected(server);
     startQuery(server, "internet");
   };
@@ -32,6 +38,7 @@ const Internet = () => {
   return (
     <List
       data={list}
+      onSelect={onSelect}
       renderItem={(item, index) => (
         <ServerItem
           isSelected={

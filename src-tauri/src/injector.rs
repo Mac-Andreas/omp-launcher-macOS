@@ -85,6 +85,59 @@ fn stage_injector(game_dir: &Path, downloaded: Option<&Path>) -> Result<PathBuf>
     Ok(dest)
 }
 
+// Windowed mode (Beta → Windowed mode, on by default): ThirteenAG's
+// WindowedMode packaged as a plain DLL (github.com/Mac-Andreas/omp-windowedmode).
+// GTA SA's true fullscreen does an exclusive D3D mode-set that is unstable under
+// CrossOver; the DLL keeps the device windowed, here as a normal bordered
+// window. Stages the DLL next to the exe and returns its path.
+#[cfg(not(target_os = "windows"))]
+fn stage_windowed_mode(game_dir: &Path) -> Option<PathBuf> {
+    const DLL: &[u8] = include_bytes!("../../tools/windowedmode/windowedmode.dll");
+    const INI: &str = include_str!("../../tools/windowedmode/windowedmode.ini");
+    let dll_path = game_dir.join("windowedmode.dll");
+    if let Err(e) = std::fs::write(&dll_path, DLL) {
+        log::warn!("[run_samp] failed to stage windowedmode.dll: {}", e);
+        return None;
+    }
+    let ini_path = game_dir.join("windowedmode.ini");
+    let ini = match std::fs::read_to_string(&ini_path) {
+        Ok(existing) => pin_bordered_window(&existing),
+        Err(_) => INI.to_string(),
+    };
+    if let Err(e) = std::fs::write(&ini_path, ini) {
+        log::warn!("[run_samp] failed to stage windowedmode.ini: {}", e);
+    }
+    info!("[run_samp] staged windowed mode at {}", dll_path.display());
+    Some(dll_path)
+}
+
+// The DLL writes its state (mode, position, size) back to windowedmode.ini on
+// exit. Keep that, but pin the bordered window mode (Alt+Enter changes only
+// last until the next launch) and move a window still at the old 640x480
+// default up to 1280x800, so the game doesn't render tiny and get upscaled.
+#[cfg(not(target_os = "windows"))]
+fn pin_bordered_window(ini: &str) -> String {
+    let value = |key: &str| -> Option<i32> {
+        ini.lines()
+            .find_map(|l| l.trim().strip_prefix(key)?.strip_prefix('='))
+            .and_then(|v| v.split(|c: char| c == ';' || c.is_whitespace()).next())
+            .and_then(|v| v.parse().ok())
+    };
+    let bump = value("resolutionX").map_or(false, |x| x <= 640);
+    ini.lines()
+        .map(|line| {
+            let key = line.trim().split('=').next().unwrap_or("").trim();
+            match key {
+                "mode" => "mode=1\t\t\t; 1: window, 2: window borderless, 3: fullscreen".to_string(),
+                "resolutionX" if bump => "resolutionX=1280".to_string(),
+                "resolutionY" if bump => "resolutionY=800".to_string(),
+                _ => line.to_string(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\r\n")
+}
+
 // Debug-mode injection uses a vorbisFile.dll proxy instead of the external
 // injector. gta-sa.exe imports vorbisFile.dll, so Wine loads the proxy at
 // process start; the proxy then LoadLibrary's samp.dll + omp-client.dll. The
@@ -233,6 +286,8 @@ pub async fn run_samp(
     detailed: bool,
     audio_fix: bool,
     render_fix: bool,
+    text_fix: bool,
+    windowed_mode: bool,
 ) -> Result<()> {
     let game_dir = PathBuf::from(executable_dir);
     let wine_channels = if detailed {
@@ -482,6 +537,33 @@ pub async fn run_samp(
         reg_del("HKCU\\Software\\Wine\\Direct3D", "MaxVersionGL");
     }
 
+    // Text fix (Beta → Text fix). SA-MP draws chat, dialogs and textdraws with
+    // ID3DXFont from d3dx9_25.dll (D3DXCreateFont, small bold Arial), which
+    // rasterises glyphs through GDI with the system font smoothing. The bottle
+    // defaults to plain grayscale smoothing (FontSmoothingType=1), and Arial's
+    // GASP table turns grayscale off at these small sizes, so the text comes
+    // out aliased: hard pixel edges inside SA-MP's black outline. Windows
+    // defaults to ClearType, which ignores GASP — set the same in the bottle
+    // (type 2, gamma 1400, RGB). The game exe also prefers Microsoft's native
+    // d3dx9_25.dll when the bottle has it (AppDefaults, not bottle-wide).
+    // Turning the fix off restores the bottle's grayscale defaults.
+    let desktop = "HKCU\\Control Panel\\Desktop";
+    let d3dx_overrides = format!(
+        "HKCU\\Software\\Wine\\AppDefaults\\{}\\DllOverrides",
+        exe_name
+    );
+    reg(desktop, "FontSmoothing", "2");
+    if text_fix {
+        reg_dword(desktop, "FontSmoothingType", "2");
+        reg_dword(desktop, "FontSmoothingGamma", "0x578");
+        reg_dword(desktop, "FontSmoothingOrientation", "1");
+        reg(&d3dx_overrides, "d3dx9_25", "native,builtin");
+    } else {
+        reg_dword(desktop, "FontSmoothingType", "1");
+        reg_dword(desktop, "FontSmoothingGamma", "0");
+        reg_del(&d3dx_overrides, "d3dx9_25");
+    }
+
     let exe_win = to_win_path(&exe_path).ok_or_else(|| {
         LauncherError::NotFound("game exe is outside the bottle drive_c".to_string())
     })?;
@@ -544,7 +626,18 @@ pub async fn run_samp(
     let samp_win = to_win_path(&game_dir.join(SAMP_DLL)).ok_or_else(|| {
         LauncherError::NotFound("samp.dll is outside the bottle drive_c".to_string())
     })?;
-    let mut dll_args: Vec<String> = vec!["--".into(), samp_win];
+    let mut dll_args: Vec<String> = vec!["--".into()];
+    // Windowed mode goes first so its hooks are in place before the client
+    // DLLs run and before the game creates its D3D device.
+    if windowed_mode {
+        let windowed_win = stage_windowed_mode(&game_dir)
+            .and_then(|p| to_win_path(&p))
+            .ok_or_else(|| {
+                LauncherError::Process("Failed to stage windowedmode.dll".to_string())
+            })?;
+        dll_args.push(windowed_win);
+    }
+    dll_args.push(samp_win);
     if !omp_file.is_empty() {
         if let Some(omp_win) = to_win_path(&game_dir.join(OMP_CLIENT_DLL)) {
             dll_args.push(omp_win);
@@ -586,6 +679,8 @@ pub async fn run_samp(
     _detailed: bool,
     _audio_fix: bool,
     _render_fix: bool,
+    _text_fix: bool,
+    _windowed_mode: bool,
 ) -> Result<()> {
     // Prepare the command to spawn the executable
     let target_game_exe = if custom_game_exe.len() > 0 {

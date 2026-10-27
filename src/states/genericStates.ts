@@ -24,6 +24,7 @@ const useGenericTempState = create<GenericTempStates>()((set, get) => ({
     sortPlayer: "none",
     sortName: "none",
     sortMode: "none",
+    sortLock: "none",
     languages: [],
   },
   listType: "favorites",
@@ -38,11 +39,17 @@ const useGenericTempState = create<GenericTempStates>()((set, get) => ({
   setListType: (type) => set(() => ({ listType: type })),
 }));
 
+// Server list Mode column width, set by dragging its right-hand divider.
+// Name takes the remaining space; Players and Ping are sized to fit.
+export const DEFAULT_MODE_WIDTH = 200;
+
 interface GenericPersistentStates {
   sideLists: boolean;
   language: LanguageType;
+  modeColumnWidth: number;
   showSideLists: (show: boolean) => void;
   setLanguage: (lang: LanguageType) => void;
+  setModeColumnWidth: (width: number) => void;
 }
 
 const useGenericPersistentState = create<GenericPersistentStates>()(
@@ -50,8 +57,10 @@ const useGenericPersistentState = create<GenericPersistentStates>()(
     (set) => ({
       sideLists: true,
       language: "en",
+      modeColumnWidth: DEFAULT_MODE_WIDTH,
       showSideLists: (show: boolean) => set(() => ({ sideLists: show })),
       setLanguage: (lang) => set(() => ({ language: lang })),
+      setModeColumnWidth: (width) => set(() => ({ modeColumnWidth: width })),
     }),
     {
       name: "generic-state-storage",

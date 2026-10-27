@@ -21,6 +21,11 @@ import { useTheme } from "../../../states/theme";
 import { sc } from "../../../utils/sizeScaler";
 import { Log } from "../../../utils/logger";
 
+// Favourite toggle colours, shared with the bottom bar's favourite button:
+// green to add, dark red to remove.
+export const FAV_ADD_COLOR = "#2D6B3A";
+export const FAV_REMOVE_COLOR = "#6B2020";
+
 interface SearchBarProps {
   onChange: (query: string) => void;
 }
@@ -101,7 +106,8 @@ const SearchBar = memo<SearchBarProps>(({ onChange }) => {
       searchData.sortMode !== "none" ||
       searchData.sortName !== "none" ||
       searchData.sortPing !== "none" ||
-      searchData.sortPlayer !== "none"
+      searchData.sortPlayer !== "none" ||
+      searchData.sortLock !== "none"
     );
   }, [searchData]);
 
@@ -257,7 +263,7 @@ const SearchBar = memo<SearchBarProps>(({ onChange }) => {
               icon={favorited ? images.icons.favRemove : images.icons.favAdd}
               iconSize={sc(20)}
               iconColor={"#FFFFFF"}
-              buttonColor={"#6B2020"}
+              buttonColor={favorited ? FAV_REMOVE_COLOR : FAV_ADD_COLOR}
               onPress={toggleFavorite}
             />
           </>

@@ -20,6 +20,7 @@ import { useSettingsModal } from "../states/settingsModal";
 import { useTheme } from "../states/theme";
 import { sc } from "../utils/sizeScaler";
 import { useGameLaunch } from "../states/gameLaunch";
+import { useModalOverlay } from "../states/modalOverlay";
 
 // Orange accent for the BETA badge — distinct from the theme's primary so it
 // reads as a "pre-release" marker rather than a normal UI element. The light
@@ -146,6 +147,7 @@ const WindowTitleBar = memo(() => {
   const BETA_COLOR = themeType === "light" ? BETA_COLOR_LIGHT : BETA_COLOR_DARK;
   const { show: showSettings } = useSettingsModal();
   const { launching } = useGameLaunch();
+  const modalOpen = useModalOverlay((s) => s.openCount > 0);
   // Single source of truth — fetched once on app launch.
   const hasCampaign = useFeedback((s) => !!s.campaign);
   const openFeedback = useFeedback((s) => s.openPopup);
@@ -154,21 +156,35 @@ const WindowTitleBar = memo(() => {
   // only shows for pre-release builds (version contains "beta"), so a future
   // stable release hides it automatically with no code change.
   const [version, setVersion] = useState("");
-  const [betaTooltip, setBetaTooltip] = useState(false);
+  const [betaHover, setBetaHover] = useState(false);
+  const [betaPinned, setBetaPinned] = useState(false);
+  const betaTooltip = betaHover || betaPinned;
   const [tooltipPos, setTooltipPos] = useState({ top: 0, left: 0 });
-  const badgeRef = useRef<HTMLDivElement | null>(null);
+  const betaHelpRef = useRef<HTMLDivElement | null>(null);
   const isBeta = useMemo(() => /beta/i.test(version), [version]);
   useEffect(() => {
     getVersion().then(setVersion).catch(() => {});
   }, []);
 
-  // Anchor the portalled tooltip just below the badge using its live screen
+  // Anchor the portalled tooltip just below the (?) using its live screen
   // rect — the portal renders to <body>, so it needs absolute coordinates.
-  const showBetaTooltip = useCallback(() => {
-    const rect = badgeRef.current?.getBoundingClientRect();
+  const anchorBetaTooltip = useCallback(() => {
+    const rect = betaHelpRef.current?.getBoundingClientRect();
     if (rect) setTooltipPos({ top: rect.bottom + sc(6), left: rect.left });
-    setBetaTooltip(true);
   }, []);
+
+  // Clicking the (?) pins the tooltip open; the next click anywhere else
+  // unpins it.
+  useEffect(() => {
+    if (!betaPinned) return;
+    const onMouseDown = (e: MouseEvent) => {
+      if (!betaHelpRef.current?.contains(e.target as Node)) {
+        setBetaPinned(false);
+      }
+    };
+    document.addEventListener("mousedown", onMouseDown);
+    return () => document.removeEventListener("mousedown", onMouseDown);
+  }, [betaPinned]);
 
   const containerStyles = useMemo(
     () => ({
@@ -368,13 +384,11 @@ const WindowTitleBar = memo(() => {
         </Text>
         {/* BETA badge with version + (?) tooltip. Only shown for pre-release
             builds (version contains "beta"); a stable release hides it with no
-            code change. The tooltip is rendered through a body portal so it
-            escapes the title bar's clipped/overlapped layout. */}
+            code change. Only the (?) opens the tooltip (hover, or click to
+            pin). It is rendered through a body portal so it escapes the title
+            bar's clipped/overlapped layout. */}
         {isBeta && (
           <div
-            ref={badgeRef}
-            onMouseEnter={showBetaTooltip}
-            onMouseLeave={() => setBetaTooltip(false)}
             style={{
               // @ts-ignore
               position: "relative",
@@ -390,7 +404,7 @@ const WindowTitleBar = memo(() => {
               backgroundColor: `${BETA_COLOR}22`,
               border: `1px solid ${BETA_COLOR}66`,
               gap: sc(6),
-              cursor: "help",
+              cursor: "default",
             }}
           >
             <Text
@@ -402,14 +416,25 @@ const WindowTitleBar = memo(() => {
               BETA{version ? ` ${version}` : ""}
             </Text>
             <div
+              ref={betaHelpRef}
+              onMouseEnter={() => {
+                anchorBetaTooltip();
+                setBetaHover(true);
+              }}
+              onMouseLeave={() => setBetaHover(false)}
+              onClick={() => {
+                anchorBetaTooltip();
+                setBetaPinned((pinned) => !pinned);
+              }}
               style={{
                 width: sc(16),
                 height: sc(16),
                 borderRadius: sc(8),
-                backgroundColor: `${BETA_COLOR}40`,
+                backgroundColor: `${BETA_COLOR}${betaPinned ? "66" : "40"}`,
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
+                cursor: "pointer",
               }}
             >
               <Text
@@ -531,6 +556,25 @@ const WindowTitleBar = memo(() => {
           />
         )}
       </View>
+      {/* Same dim as the modal backdrop below, so the whole window reads as
+          blocked. It also swallows clicks and drags on the bar; the native
+          macOS traffic lights draw above the web view and stay usable. */}
+      {!IN_GAME && modalOpen && (
+        <div
+          className="modal-blur-backdrop"
+          style={{
+            position: "absolute",
+            top: 0,
+            left: 0,
+            right: 0,
+            // -1 also covers the bar's 1px bottom border, which sits outside
+            // the padding box that absolute children are positioned in.
+            bottom: -1,
+            zIndex: 100,
+            cursor: "default",
+          }}
+        />
+      )}
     </View>
   );
 });

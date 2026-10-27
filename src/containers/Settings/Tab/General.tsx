@@ -25,6 +25,7 @@ import {
   uninstallSelectedBottleSampFiles,
 } from "../../../utils/game";
 import {
+  fetchUpdateInfo,
   getSampVersionFromName,
   getSampVersionName,
 } from "../../../utils/helpers";
@@ -48,6 +49,17 @@ interface MacosHealth {
 
 const CROSSOVER_URL = "https://www.codeweavers.com/crossover";
 const DONE_DISPLAY_MS = 3000;
+// How long the Re-check result stays up; the button is unclickable meanwhile
+// so it can't be spammed.
+const RECHECK_COOLDOWN_MS = 5000;
+
+const STATUS_GREEN = "#3FB950";
+const STATUS_ORANGE = "#E8912B";
+// Shared height for the tile-header controls: status pills, Show in Finder,
+// Get CrossOver and Re-check.
+const CHIP_HEIGHT = sc(30);
+
+type RecheckPhase = "idle" | "checking" | "result";
 
 // Toned-down solid action colours (the neon #3FB950 / #E5534B read too bright).
 const ACTION_GREEN = "#3C9A54";
@@ -135,10 +147,14 @@ const Overview = () => {
   const [justDone, setJustDone] = useState(false);
   const [uninstalling, setUninstalling] = useState(false);
   const [clearingCache, setClearingCache] = useState(false);
+  const [recheckPhase, setRecheckPhase] = useState<RecheckPhase>("idle");
   const doneTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const recheckResultTimer = useRef<ReturnType<typeof setTimeout> | null>(
+    null
+  );
 
   const refresh = useCallback(() => {
-    invoke<MacosHealth>("get_macos_health", { bottleName })
+    return invoke<MacosHealth>("get_macos_health", { bottleName })
       .then(async (h) => {
         setHealth(h);
         if (h.game_exe && h.game_path) {
@@ -157,7 +173,9 @@ const Overview = () => {
       });
   }, [bottleName]);
 
-  useEffect(() => refresh(), [refresh]);
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
 
   useEffect(() => {
     if (sampVersion !== "custom") return;
@@ -184,9 +202,24 @@ const Overview = () => {
   useEffect(
     () => () => {
       if (doneTimer.current) clearTimeout(doneTimer.current);
+      if (recheckResultTimer.current) clearTimeout(recheckResultTimer.current);
     },
     []
   );
+
+  // Re-check reruns setup detection plus a quiet launcher update check, then
+  // shows the outcome on the button for RECHECK_COOLDOWN_MS before it can be
+  // pressed again.
+  const handleRecheck = async () => {
+    if (recheckPhase !== "idle") return;
+    setRecheckPhase("checking");
+    await Promise.all([refresh(), fetchUpdateInfo(false).catch(() => {})]);
+    setRecheckPhase("result");
+    recheckResultTimer.current = setTimeout(
+      () => setRecheckPhase("idle"),
+      RECHECK_COOLDOWN_MS
+    );
+  };
 
   const crossoverOk = !!health?.crossover;
   const gamePath = health?.game_exe ? health.game_path || "" : "";
@@ -446,9 +479,12 @@ const Overview = () => {
               </Text>
             </View>
           ) : (
-            <Text semibold color="#FFFFFF" size={1}>
-              {t("settings_uninstall_samp_files", { defaultValue: "Uninstall" })}
-            </Text>
+            <View style={styles.btnRow}>
+              <Icon svg image={images.icons.trash} size={sc(13)} color="#FFFFFF" />
+              <Text semibold color="#FFFFFF" size={1}>
+                {t("settings_uninstall_samp_files", { defaultValue: "Uninstall" })}
+              </Text>
+            </View>
           )}
         </TouchableOpacity>
       );
@@ -473,8 +509,89 @@ const Overview = () => {
     );
   };
 
+  const renderRecheckButton = () => {
+    if (recheckPhase === "result") {
+      const tone = updateAvailable ? STATUS_ORANGE : STATUS_GREEN;
+      return (
+        <View
+          style={[
+            styles.statusChip,
+            styles.chipRow,
+            { backgroundColor: `${tone}1F`, borderColor: `${tone}66` },
+          ]}
+        >
+          {updateAvailable ? (
+            <>
+              <Text size={1} semibold color={tone}>
+                {t("settings_recheck_update", { defaultValue: "Update" })}
+              </Text>
+              <div
+                title={t("settings_recheck_update_hint", {
+                  defaultValue: "v{{v}} is available",
+                  v: updateInfo?.version,
+                })}
+              >
+                <View
+                  style={[
+                    styles.helpMarker,
+                    { borderColor: `${tone}66`, backgroundColor: `${tone}20` },
+                  ]}
+                >
+                  <Text size={1} semibold color={tone}>
+                    ?
+                  </Text>
+                </View>
+              </div>
+            </>
+          ) : (
+            <>
+              <Icon svg image={images.icons.check} size={sc(13)} color={tone} />
+              <Text size={1} semibold color={tone}>
+                {t("settings_recheck_up_to_date", {
+                  defaultValue: "Up to date",
+                })}
+              </Text>
+            </>
+          )}
+        </View>
+      );
+    }
+
+    const checking = recheckPhase === "checking";
+    return (
+      <TouchableOpacity
+        disabled={checking}
+        onPress={handleRecheck}
+        style={[
+          styles.statusChip,
+          styles.chipRow,
+          {
+            borderColor: `${theme.textPrimary}24`,
+            opacity: checking ? 0.7 : 1,
+          },
+        ]}
+      >
+        {checking ? (
+          <ActivityIndicator size="small" color={theme.textPrimary} />
+        ) : (
+          <Icon
+            svg
+            image={images.icons.recheck}
+            size={sc(13)}
+            color={theme.textPrimary}
+          />
+        )}
+        <Text size={1} semibold color={theme.textPrimary}>
+          {checking
+            ? t("settings_recheck_checking", { defaultValue: "Checking…" })
+            : t("settings_health_recheck")}
+        </Text>
+      </TouchableOpacity>
+    );
+  };
+
   const dotColor = (ok: boolean, pending: boolean) =>
-    pending ? "#888" : ok ? "#3FB950" : "#E8912B";
+    pending ? "#888" : ok ? STATUS_GREEN : STATUS_ORANGE;
 
   const sampMeta = (() => {
     const installedSamp =
@@ -496,20 +613,7 @@ const Overview = () => {
         <Text semibold size={2} color={theme.textPrimary}>
           {t("settings_overview_status_title", { defaultValue: "Setup status" })}
         </Text>
-        <TouchableOpacity
-          onPress={refresh}
-          style={[styles.refreshChip, { borderColor: `${theme.textPrimary}24` }]}
-        >
-          <Icon
-            svg
-            image={images.icons.recheck}
-            size={sc(13)}
-            color={theme.textPrimary}
-          />
-          <Text size={1} semibold color={theme.textPrimary}>
-            {t("settings_health_recheck")}
-          </Text>
-        </TouchableOpacity>
+        {renderRecheckButton()}
       </View>
       <View style={styles.tiles}>
         {/* ── CrossOver ───────────────────────────────────────────── */}
@@ -674,7 +778,7 @@ const Overview = () => {
                 value={bottleName.length === 0 ? autoLabel : bottleName}
                 items={[autoLabel, ...visibleBottles]}
                 onChange={(v) => setBottleName(v === autoLabel ? "" : v)}
-                maxVisibleItems={6}
+                maxVisibleItems={4}
               />
             </View>
           )}
@@ -763,31 +867,37 @@ const Overview = () => {
                   onChange={(name) =>
                     setSampVersion(getSampVersionFromName(name))
                   }
-                  maxVisibleItems={7}
+                  maxVisibleItems={5}
                 />
               </View>
               {installed && (
                 <TouchableOpacity
                   disabled={clearingCache}
                   onPress={handleClearCache}
-                  style={[
-                    styles.sampButton,
-                    styles.sampSecondary,
-                    {
-                      borderColor: `${theme.textPrimary}22`,
-                      backgroundColor: `${theme.textPrimary}0A`,
-                    },
-                  ]}
+                  // Same red as Uninstall beside it: both remove files.
+                  style={[styles.sampButton, { backgroundColor: ACTION_RED }]}
                 >
-                  <Text size={1} semibold color={`${theme.textPrimary}CC`}>
-                    {clearingCache
-                      ? t("settings_danger_clearing_cache", {
-                          defaultValue: "Clearing…",
-                        })
-                      : t("settings_danger_clear_cache_btn", {
-                          defaultValue: "Clear cache",
-                        })}
-                  </Text>
+                  <View style={styles.btnRow}>
+                    {clearingCache ? (
+                      <ActivityIndicator size="small" color="#FFFFFF" />
+                    ) : (
+                      <Icon
+                        svg
+                        image={images.icons.broom}
+                        size={sc(13)}
+                        color="#FFFFFF"
+                      />
+                    )}
+                    <Text size={1} semibold color="#FFFFFF">
+                      {clearingCache
+                        ? t("settings_danger_clearing_cache", {
+                            defaultValue: "Clearing…",
+                          })
+                        : t("settings_danger_clear_cache_btn", {
+                            defaultValue: "Clear cache",
+                          })}
+                    </Text>
+                  </View>
                 </TouchableOpacity>
               )}
               {renderSampAction()}
@@ -805,36 +915,45 @@ const Overview = () => {
             },
           ]}
         >
+          {/* Title + description on the left, button centred on the right. */}
           <View style={styles.tileHead}>
-            <View style={styles.tileHeadLeft}>
+            <View style={styles.resetText}>
               <Text semibold size={2} color={theme.textPrimary}>
                 {t("settings_reset_launcher_title", {
                   defaultValue: "open.mp Launcher",
                 })}
               </Text>
+              <Text
+                size={1}
+                color={`${theme.textPrimary}88`}
+                numberOfLines={2}
+                style={styles.resetSub}
+              >
+                {t("settings_danger_reset_help_short", {
+                  defaultValue:
+                    "Wipes nickname, bottle, favorites and per-server overrides, then reloads.",
+                })}
+              </Text>
             </View>
             <TouchableOpacity
               onPress={handleReset}
-              style={[styles.solidDangerButton, { backgroundColor: ACTION_RED }]}
+              style={[styles.sampButton, { backgroundColor: ACTION_RED }]}
             >
-              <Text size={1} semibold color="#FFFFFF">
-                {t("settings_danger_reset_short", {
-                  defaultValue: "Reset launcher data",
-                })}
-              </Text>
+              <View style={styles.btnRow}>
+                <Icon
+                  svg
+                  image={images.icons.reset}
+                  size={sc(13)}
+                  color="#FFFFFF"
+                />
+                <Text size={1} semibold color="#FFFFFF">
+                  {t("settings_danger_reset_short", {
+                    defaultValue: "Reset launcher data",
+                  })}
+                </Text>
+              </View>
             </TouchableOpacity>
           </View>
-          <Text
-            size={1}
-            color={`${theme.textPrimary}88`}
-            numberOfLines={2}
-            style={styles.tileSub}
-          >
-            {t("settings_danger_reset_help_short", {
-              defaultValue:
-                "Wipes nickname, bottle, favorites and per-server overrides, then reloads.",
-            })}
-          </Text>
         </View>
       </View>
 
@@ -997,16 +1116,28 @@ const styles = StyleSheet.create({
   sectionSub: {
     marginBottom: sc(2),
   },
-  refreshChip: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: sc(6),
-    paddingVertical: sc(4),
+  // Re-check button / result. Same box as the status pills and Show in Finder.
+  statusChip: {
+    height: CHIP_HEIGHT,
     paddingHorizontal: sc(10),
-    borderRadius: sc(999),
+    borderRadius: sc(6),
     borderWidth: 1,
+    justifyContent: "center",
+    alignItems: "center",
     // @ts-ignore
     cursor: "pointer",
+  },
+  chipRow: {
+    flexDirection: "row",
+    gap: sc(6),
+  },
+  helpMarker: {
+    width: sc(16),
+    height: sc(16),
+    borderRadius: sc(8),
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
   },
   tiles: {
     flexDirection: "column",
@@ -1056,17 +1187,13 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: 0,
   },
-  sampSecondary: {
-    borderWidth: 1,
+  resetText: {
+    flex: 1,
+    minWidth: 0,
   },
-  solidDangerButton: {
-    height: sc(30),
-    paddingHorizontal: sc(12),
-    borderRadius: sc(7),
-    justifyContent: "center",
-    alignItems: "center",
-    // @ts-ignore
-    cursor: "pointer",
+  resetSub: {
+    marginTop: sc(4),
+    lineHeight: sc(15),
   },
   tileHeadRight: {
     flexDirection: "row",
@@ -1075,8 +1202,8 @@ const styles = StyleSheet.create({
     flexShrink: 1,
   },
   finderButton: {
-    paddingVertical: sc(5),
-    paddingHorizontal: sc(8),
+    height: CHIP_HEIGHT,
+    paddingHorizontal: sc(10),
     borderRadius: sc(6),
     borderWidth: 1,
     justifyContent: "center",
@@ -1084,22 +1211,22 @@ const styles = StyleSheet.create({
     // @ts-ignore
     cursor: "pointer",
   },
+  // Status pills match the Show in Finder button: same height and radius.
   pill: {
-    paddingVertical: sc(3),
+    height: CHIP_HEIGHT,
     paddingHorizontal: sc(10),
-    borderRadius: sc(999),
+    borderRadius: sc(6),
     borderWidth: 1,
-    alignSelf: "flex-start",
+    justifyContent: "center",
   },
   actionButton: {
     flexDirection: "row",
     alignItems: "center",
     gap: sc(5),
-    paddingVertical: sc(5),
+    height: CHIP_HEIGHT,
     paddingHorizontal: sc(10),
-    borderRadius: sc(999),
+    borderRadius: sc(6),
     borderWidth: 1,
-    alignSelf: "flex-start",
     // @ts-ignore
     cursor: "pointer",
   },
@@ -1161,7 +1288,7 @@ const styles = StyleSheet.create({
   aboutPill: {
     paddingVertical: sc(3),
     paddingHorizontal: sc(10),
-    borderRadius: sc(999),
+    borderRadius: sc(6),
     borderWidth: 1,
     alignSelf: "flex-start",
   },

@@ -72,13 +72,17 @@ const updateServersInBatches = (
   const batches = chunk(servers, SERVER_UPDATE_CONFIG.BATCH_SIZE);
 
   batches.forEach((batch, batchIndex) => {
-    setTimeout(() => {
-      batch.forEach((server) => {
-        if (server) {
-          queryServer(server, listType, "basic");
-        }
-      });
-    }, SERVER_UPDATE_CONFIG.INITIAL_DELAY + batchIndex * SERVER_UPDATE_CONFIG.BATCH_DELAY);
+    setTimeout(
+      () => {
+        batch.forEach((server) => {
+          if (server) {
+            queryServer(server, listType, "basic");
+          }
+        });
+      },
+      SERVER_UPDATE_CONFIG.INITIAL_DELAY +
+        batchIndex * SERVER_UPDATE_CONFIG.BATCH_DELAY
+    );
   });
 };
 
@@ -127,7 +131,9 @@ const isNewer = (remote: string, local: string): boolean => {
   return false;
 };
 
-export const fetchUpdateInfo = async () => {
+// `prompt: false` refreshes the stored update info without popping the
+// "Update available" modal (Settings → Overview re-check shows it inline).
+export const fetchUpdateInfo = async (prompt = true) => {
   const nativeVer = await getVersion();
   const hostOS = await type();
 
@@ -162,6 +168,8 @@ export const fetchUpdateInfo = async () => {
     useAppState.getState().setNativeAppVersionValue(nativeVer);
     useAppState.getState().setHostOSValue(hostOS);
   }
+
+  if (!prompt) return;
 
   setTimeout(async () => {
     const { updateInfo, skipUpdate, skippedUpdateVersion } =
@@ -234,6 +242,18 @@ export const getIpAddress = async (
   }
 };
 
+// Typing one of these as the whole search filters by server type instead of
+// matching text.
+const QUERY_KEYWORDS: Record<string, (server: Server) => boolean> = {
+  "open.mp": (server) => server.usingOmp,
+  omp: (server) => server.usingOmp,
+  samp: (server) => !server.usingOmp,
+  "sa-mp": (server) => !server.usingOmp,
+  partners: (server) => server.partner,
+  partner: (server) => server.partner,
+  internet: (server) => !server.partner,
+};
+
 const filterServers = (
   servers: readonly Server[],
   searchData: SearchData,
@@ -241,7 +261,8 @@ const filterServers = (
 ): Server[] => {
   const { ompOnly, nonEmpty, unpassworded, query, languages } = searchData;
 
-  const loweredQuery = query.toLowerCase();
+  const loweredQuery = query.trim().toLowerCase();
+  const keywordFilter = QUERY_KEYWORDS[loweredQuery];
 
   return servers.filter((server) => {
     if (!server.ip || !server.hostname) return false;
@@ -256,9 +277,12 @@ const filterServers = (
       languages.some((lang) => checkLanguage(server.language, lang));
 
     const queryCheck =
-      !query ||
-      server.hostname.toLowerCase().includes(loweredQuery) ||
-      server.gameMode.toLowerCase().includes(loweredQuery);
+      !loweredQuery ||
+      (keywordFilter
+        ? keywordFilter(server)
+        : server.hostname.toLowerCase().includes(loweredQuery) ||
+          server.gameMode.toLowerCase().includes(loweredQuery) ||
+          `${server.ip}:${server.port}`.includes(loweredQuery));
 
     return (
       ompCheck &&
@@ -296,6 +320,39 @@ const applySorting = (
   });
 };
 
+// Ping sort: measured servers first, unreachable ones (shown as "-") always
+// last. "descending" (the first click) orders low to high, "ascending" high
+// to low.
+const applyPingSorting = (servers: Server[], sortType: SortType): Server[] => {
+  if (sortType === "none") return servers;
+
+  const direction = sortType === "descending" ? 1 : -1;
+  return [...servers].sort((a, b) => {
+    const aDown = a.ping >= PING_TIMEOUT_VALUE;
+    const bDown = b.ping >= PING_TIMEOUT_VALUE;
+    if (aDown !== bDown) return aDown ? 1 : -1;
+    if (aDown) return 0;
+    return (a.ping - b.ping) * direction;
+  });
+};
+
+// Lock column sort, grouped the way the list colours its lock icons: open
+// (green), passworded (red), offline (grey). "descending" puts open servers
+// first, "ascending" passworded ones; offline servers stay last either way.
+const applyLockSorting = (servers: Server[], sortType: SortType): Server[] => {
+  if (sortType === "none") return servers;
+
+  const rank = (server: Server) => {
+    if (server.hasPassword) return sortType === "ascending" ? 0 : 1;
+    if (server.ping < PING_TIMEOUT_VALUE) {
+      return sortType === "descending" ? 0 : 1;
+    }
+    return 2;
+  };
+
+  return [...servers].sort((a, b) => rank(a) - rank(b));
+};
+
 export const sortAndSearchInServerList = (
   servers: readonly Server[],
   searchData: SearchData,
@@ -303,10 +360,13 @@ export const sortAndSearchInServerList = (
 ): Server[] => {
   let filteredServers = filterServers(servers, searchData, checkForPartnership);
 
-  const { sortPing, sortPlayer, sortName, sortMode } = searchData;
+  const { sortPing, sortPlayer, sortName, sortMode, sortLock } = searchData;
 
+  if (sortLock !== "none") {
+    filteredServers = applyLockSorting(filteredServers, sortLock);
+  }
   if (sortPing !== "none") {
-    filteredServers = applySorting(filteredServers, sortPing, "ping");
+    filteredServers = applyPingSorting(filteredServers, sortPing);
   }
   if (sortPlayer !== "none") {
     filteredServers = applySorting(filteredServers, sortPlayer, "playerCount");

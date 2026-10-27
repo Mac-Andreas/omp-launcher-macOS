@@ -3456,7 +3456,7 @@ dependencies = [
 
 [[package]]
 name = "omp-launcher"
-version = "1.6.3-arm-beta.1"
+version = "1.7.0-arm-beta.1"
 dependencies = [
  "actix-cors",
  "actix-rt",

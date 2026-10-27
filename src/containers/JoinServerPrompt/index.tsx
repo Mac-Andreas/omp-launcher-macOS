@@ -32,8 +32,14 @@ import { startGame } from "../../utils/game";
 import { sc } from "../../utils/sizeScaler";
 import { SAMPDLLVersions } from "../../utils/types";
 
-const CARD_WIDTH = 400;
-const BANNER_HEIGHT = 120;
+const CARD_WIDTH = 440;
+// Inner side padding of the card: avatar, header, fields and Connect.
+const CARD_PADDING = sc(20);
+// Link buttons are coloured only when the server has that link; otherwise
+// they stay grey and disabled.
+const DISCORD_COLOR = "#5865F2";
+const WEBSITE_COLOR = "#2F81F7";
+const BANNER_HEIGHT = 135;
 const AVATAR_SIZE = 64;
 const COPY_RESET_MS = 1500;
 
@@ -70,9 +76,12 @@ const JoinServerPrompt = () => {
   >();
   const [perServerNickname, setPerServerNickname] = useState("");
   const [copied, setCopied] = useState(false);
+  const [dropdownOpen, setDropdownOpen] = useState(false);
 
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const { nickName, gtasaPath, sampVersion, setSampVersion } = useSettings();
+  const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { nickName, gtasaPath, sampVersion, setSampVersion, recentNicknames } =
+    useSettings();
 
   const settings = useMemo(() => {
     if (server) return getServerSettings(server);
@@ -89,13 +98,13 @@ const JoinServerPrompt = () => {
 
   useEffect(() => {
     if (settings) {
-      if (settings.nickname !== undefined) setPerServerNickname(settings.nickname);
-      if (settings.sampVersion !== undefined) setPerServerVersion(settings.sampVersion);
+      setPerServerNickname(settings.nickname || "");
+      setPerServerVersion(settings.sampVersion);
     } else {
       setPerServerNickname("");
       setPerServerVersion(undefined);
     }
-  }, [settings]);
+  }, [visible, server?.ip, server?.port]);
 
   useEffect(() => {
     setPassword(server && server.password ? server.password : "");
@@ -120,17 +129,14 @@ const JoinServerPrompt = () => {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [visible, showPrompt]);
 
+  // Prefer the banner for the current theme, but fall back to the other one:
+  // most servers only publish a dark banner, which left light mode bannerless.
   const bannerUrl = useMemo(() => {
-    if (server && server.omp) {
-      if (themeType === "dark") {
-        if (server.omp.bannerDark && server.omp.bannerDark.length)
-          return server.omp.bannerDark;
-      } else {
-        if (server.omp.bannerLight && server.omp.bannerLight.length)
-          return server.omp.bannerLight;
-      }
-    }
-    return "";
+    if (!server?.omp) return "";
+    const { bannerDark, bannerLight } = server.omp;
+    const preferred = themeType === "dark" ? bannerDark : bannerLight;
+    const fallback = themeType === "dark" ? bannerLight : bannerDark;
+    return preferred || fallback || "";
   }, [server, themeType]);
 
   const logoUrl = useMemo(() => {
@@ -146,14 +152,15 @@ const JoinServerPrompt = () => {
     [server]
   );
   const hasPassword = !!server?.hasPassword;
-  const CARD_HEIGHT = hasPassword ? 530 : 460;
+  // The card sizes to its content; onLayout reports the real height so it
+  // stays centred. The initial value only covers the first frame.
+  const [cardHeight, setCardHeight] = useState(hasPassword ? 470 : 400);
 
   const dynamicStyles = useMemo(
     () => ({
       container: {
-        top: height / 2 - CARD_HEIGHT / 2 - 25,
+        top: height / 2 - cardHeight / 2 - 25,
         left: width / 2 - CARD_WIDTH / 2,
-        height: CARD_HEIGHT,
         width: CARD_WIDTH,
         backgroundColor: theme.secondary,
       },
@@ -181,9 +188,6 @@ const JoinServerPrompt = () => {
         fontStyle: perServerNickname.length ? "normal" : "italic",
         backgroundColor: theme.textInputBackgroundColor,
       },
-      connectButton: {
-        backgroundColor: theme.primary,
-      },
       pillNeutral: {
         backgroundColor: `${theme.textPrimary}14`,
       },
@@ -200,7 +204,7 @@ const JoinServerPrompt = () => {
         borderColor: `${theme.textPrimary}1F`,
       },
     }),
-    [height, width, CARD_HEIGHT, theme, perServerNickname.length, copied]
+    [height, width, cardHeight, theme, perServerNickname.length, copied]
   );
 
   const setInitialSampVersion = useCallback(async () => {
@@ -230,8 +234,15 @@ const JoinServerPrompt = () => {
 
   const handleNicknameChange = useCallback(
     (text: string) => {
-      if (!server) return;
-      setServerSettings(server, text, settings?.sampVersion);
+      setPerServerNickname(text);
+
+      if (server) {
+        if (settings) {
+          setServerSettings(server, text, settings.sampVersion);
+        } else {
+          setServerSettings(server, text, undefined);
+        }
+      }
     },
     [server, settings, setServerSettings]
   );
@@ -243,6 +254,31 @@ const JoinServerPrompt = () => {
     if (copyTimer.current) clearTimeout(copyTimer.current);
     copyTimer.current = setTimeout(() => setCopied(false), COPY_RESET_MS);
   }, [server]);
+  const openDropdown = useCallback(() => {
+    if (hideTimer.current) clearTimeout(hideTimer.current);
+    setDropdownOpen(true);
+  }, []);
+
+  const closeDropdown = useCallback(() => {
+    if (hideTimer.current) clearTimeout(hideTimer.current);
+    hideTimer.current = setTimeout(() => setDropdownOpen(false), 150);
+  }, []);
+
+  const handleRecentNicknamePress = useCallback(
+    (name: string) => {
+      setPerServerNickname(name);
+      if (server) {
+        if (settings) {
+          setServerSettings(server, name, settings.sampVersion);
+        } else {
+          setServerSettings(server, name, undefined);
+        }
+      }
+      if (hideTimer.current) clearTimeout(hideTimer.current);
+      setDropdownOpen(false);
+    },
+    [server, settings, setServerSettings]
+  );
 
   const handleConnect = useCallback(() => {
     if (!server) return;
@@ -286,7 +322,10 @@ const JoinServerPrompt = () => {
 
   return (
     <StaticModal onDismiss={() => showPrompt(false)}>
-      <View style={[styles.container, dynamicStyles.container]}>
+      <View
+        style={[styles.container, dynamicStyles.container]}
+        onLayout={(e) => setCardHeight(e.nativeEvent.layout.height)}
+      >
         <View style={[styles.banner, dynamicStyles.banner]}>
           {bannerUrl.length > 0 ? (
             <Image
@@ -487,29 +526,27 @@ const JoinServerPrompt = () => {
               >
                 {server?.ip}:{server?.port}
               </Text>
-              <Tooltip
-                text={
-                  copied
-                    ? (t("copiedToClipboard", {
-                        defaultValue: "Copied",
-                      }) as string)
-                    : (t("copy", { defaultValue: "Copy" }) as string)
-                }
+              <Pressable
+                onPress={handleCopyIp}
+                style={[styles.linkButton, dynamicStyles.copyButton]}
               >
-                <Pressable
-                  onPress={handleCopyIp}
-                  style={[styles.copyButton, dynamicStyles.copyButton]}
+                <Icon
+                  svg
+                  image={copied ? images.icons.check : images.icons.copyIp}
+                  size={sc(12)}
+                  color={copied ? theme.primary : `${theme.textPrimary}CC`}
+                />
+                <Text
+                  size={1}
+                  semibold
+                  color={copied ? theme.primary : theme.textPrimary}
+                  style={styles.linkText}
                 >
-                  <Text
-                    size={1}
-                    semibold
-                    color={copied ? theme.primary : `${theme.textPrimary}AA`}
-                    style={styles.copyGlyph}
-                  >
-                    {copied ? "✓" : "⎘"}
-                  </Text>
-                </Pressable>
-              </Tooltip>
+                  {copied
+                    ? t("copiedToClipboard", { defaultValue: "Copied" })
+                    : t("copy", { defaultValue: "Copy" })}
+                </Text>
+              </Pressable>
             </View>
             {/* Discord + Website, right-aligned. Always shown — greyed and
                 disabled when the server exposes no link. */}
@@ -533,20 +570,21 @@ const JoinServerPrompt = () => {
                       onPress={() => hasDiscord && shell.open(discordUrl)}
                       style={[
                         styles.linkButton,
-                        dynamicStyles.linkButton,
-                        !hasDiscord && styles.linkButtonDisabled,
+                        hasDiscord
+                          ? { backgroundColor: DISCORD_COLOR, borderColor: DISCORD_COLOR }
+                          : [dynamicStyles.linkButton, styles.linkButtonDisabled],
                       ]}
                     >
                       <Icon
                         svg
                         image={images.icons.discord}
                         size={sc(13)}
-                        color={`${theme.textPrimary}CC`}
+                        color={hasDiscord ? "#FFFFFF" : `${theme.textPrimary}CC`}
                       />
                       <Text
                         size={1}
                         semibold
-                        color={theme.textPrimary}
+                        color={hasDiscord ? "#FFFFFF" : theme.textPrimary}
                         style={styles.linkText}
                       >
                         Discord
@@ -556,7 +594,7 @@ const JoinServerPrompt = () => {
                           svg
                           image={images.icons.external}
                           size={sc(9)}
-                          color={`${theme.textPrimary}99`}
+                          color="#FFFFFF"
                         />
                       )}
                     </Pressable>
@@ -582,24 +620,33 @@ const JoinServerPrompt = () => {
                       onPress={() => hasWebsite && shell.open(websiteUrl)}
                       style={[
                         styles.linkButton,
-                        dynamicStyles.linkButton,
-                        !hasWebsite && styles.linkButtonDisabled,
+                        hasWebsite
+                          ? { backgroundColor: WEBSITE_COLOR, borderColor: WEBSITE_COLOR }
+                          : [dynamicStyles.linkButton, styles.linkButtonDisabled],
                       ]}
                     >
                       <Icon
                         svg
                         image={images.icons.link}
                         size={sc(13)}
-                        color={`${theme.textPrimary}CC`}
+                        color={hasWebsite ? "#FFFFFF" : `${theme.textPrimary}CC`}
                       />
                       <Text
                         size={1}
                         semibold
-                        color={theme.textPrimary}
+                        color={hasWebsite ? "#FFFFFF" : theme.textPrimary}
                         style={styles.linkText}
                       >
                         Website
                       </Text>
+                      {hasWebsite && (
+                        <Icon
+                          svg
+                          image={images.icons.external}
+                          size={sc(9)}
+                          color="#FFFFFF"
+                        />
+                      )}
                     </Pressable>
                   </Tooltip>
                 );
@@ -611,15 +658,6 @@ const JoinServerPrompt = () => {
         <View style={[styles.divider, dynamicStyles.divider]} />
 
         <View style={styles.section}>
-          <Text
-            semibold
-            size={1}
-            color={`${theme.textPrimary}99`}
-            style={styles.sectionTitle}
-          >
-            {t("server_join_prompt_personalise", { defaultValue: "PERSONALISE" })}
-          </Text>
-
           {hasPassword && (
             <View style={styles.field}>
               <Text semibold color={theme.textPrimary} size={2}>
@@ -639,29 +677,23 @@ const JoinServerPrompt = () => {
           )}
 
           <View style={styles.field}>
+            {/* One label line; the explanation lives in the (?) tooltip. */}
             <View style={styles.labelRow}>
-              <View>
-                <Text semibold color={theme.textPrimary} size={2}>
-                  {t("server_join_prompt_your_nickname", {
-                    defaultValue: "Your Nickname",
-                  })}
-                </Text>
-                <Text size={1} color={`${theme.textPrimary}66`}>
-                  {t("server_join_prompt_nickname_hint", {
-                    defaultValue: "Personalise your nickname for this server.",
-                  })}
-                </Text>
-                <Text size={1} color={`${theme.textPrimary}66`}>
-                  {t("server_join_prompt_nickname_hint2", {
-                    defaultValue: "You will connect using this name.",
-                  })}
-                </Text>
-              </View>
+              <Text
+                semibold
+                size={1}
+                color={`${theme.textPrimary}99`}
+                style={styles.sectionTitle}
+              >
+                {t("server_join_prompt_personalise_nickname", {
+                  defaultValue: "PERSONALISE NICKNAME",
+                })}
+              </Text>
               <Tooltip
                 text={
-                  t("server_join_prompt_nickname_tooltip", {
+                  t("server_join_prompt_nickname_help", {
                     defaultValue:
-                      "Personal nickname for this server. Overrides your global nickname only here.",
+                      "Personalise your nickname for this server. You will connect using this name; it overrides your global nickname only here.",
                   }) as string
                 }
               >
@@ -677,28 +709,52 @@ const JoinServerPrompt = () => {
                 </View>
               </Tooltip>
             </View>
-            <TextInput
-              placeholderTextColor={theme.textPlaceholder}
-              placeholder={nickName}
-              value={perServerNickname}
-              onChangeText={handleNicknameChange}
-              // @ts-ignore — RN-Web extends TextInput
-              style={[styles.textInput, dynamicStyles.nicknameInput]}
-            />
+            <View style={styles.nicknameInputWrapper}>
+              <TextInput
+                placeholderTextColor={theme.textPlaceholder}
+                placeholder={nickName}
+                value={perServerNickname}
+                onChangeText={handleNicknameChange}
+                onFocus={openDropdown}
+                onBlur={closeDropdown}
+                // @ts-ignore — RN-Web extends TextInput
+                style={[styles.textInput, dynamicStyles.nicknameInput]}
+              />
+              {dropdownOpen && recentNicknames.length > 0 && (
+                <View
+                  style={[
+                    styles.dropdown,
+                    {
+                      backgroundColor: theme.itemBackgroundColor,
+                      borderColor: theme.textSecondary,
+                    },
+                  ]}
+                >
+                  {recentNicknames.map((name) => (
+                    <Pressable
+                      key={name}
+                      onPress={() => handleRecentNicknamePress(name)}
+                      style={styles.dropdownItem}
+                    >
+                      <Text
+                        numberOfLines={1}
+                        style={[
+                          styles.dropdownItemText,
+                          { color: theme.textPrimary },
+                        ]}
+                      >
+                        {name}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+              )}
+            </View>
           </View>
-
-          <View
-            style={[
-              styles.divider,
-              dynamicStyles.divider,
-              styles.innerDivider,
-            ]}
-          />
-
         </View>
 
         <TouchableOpacity
-          style={[styles.connectButton, dynamicStyles.connectButton]}
+          style={styles.connectButton}
           onPress={handleConnect}
         >
           <Icon
@@ -719,8 +775,9 @@ const JoinServerPrompt = () => {
 };
 
 // Themed hover tooltip. Renders a small bubble above the wrapped element on
-// pointer-hover. RN-Web's onHoverIn / onHoverOut on Pressable drive it, so this
-// works without depending on the OS's native title= behavior.
+// pointer-hover, without depending on the OS's native title= behavior. The
+// wrapper is a plain div: wrapping the child in another Pressable made the
+// cursor flicker between the two elements' cursor styles.
 const Tooltip = ({
   text,
   children,
@@ -731,15 +788,12 @@ const Tooltip = ({
   const [hover, setHover] = useState(false);
   const { theme } = useTheme();
   return (
-    <View style={tooltipStyles.wrap}>
-      <Pressable
-        onHoverIn={() => setHover(true)}
-        onHoverOut={() => setHover(false)}
-        // @ts-ignore — RN-Web also forwards mouse events
-        onPointerLeave={() => setHover(false)}
-      >
-        {children}
-      </Pressable>
+    <div
+      style={{ position: "relative", display: "inline-flex" }}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+    >
+      {children}
       {hover && text.length > 0 && (
         <View
           style={[
@@ -761,7 +815,7 @@ const Tooltip = ({
           </Text>
         </View>
       )}
-    </View>
+    </div>
   );
 };
 
@@ -817,7 +871,7 @@ const styles = StyleSheet.create({
   avatarWrap: {
     position: "absolute",
     top: BANNER_HEIGHT - AVATAR_SIZE / 2,
-    left: sc(16),
+    left: CARD_PADDING,
     width: AVATAR_SIZE + sc(6),
     height: AVATAR_SIZE + sc(6),
     borderRadius: (AVATAR_SIZE + sc(6)) / 2,
@@ -839,14 +893,14 @@ const styles = StyleSheet.create({
     width: "100%",
   },
   besideAvatar: {
-    paddingLeft: sc(16) + AVATAR_SIZE + sc(12),
-    paddingRight: sc(16),
+    paddingLeft: CARD_PADDING + AVATAR_SIZE + sc(12),
+    paddingRight: CARD_PADDING,
     marginTop: sc(8),
     gap: sc(6),
     minHeight: AVATAR_SIZE / 2 + sc(8),
   },
   headerBlock: {
-    paddingHorizontal: sc(16),
+    paddingHorizontal: CARD_PADDING,
     marginTop: sc(3),
   },
   serverName: {
@@ -874,20 +928,6 @@ const styles = StyleSheet.create({
   serverIp: {
     // @ts-ignore
     fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-  },
-  copyButton: {
-    width: sc(22),
-    height: sc(22),
-    borderRadius: sc(6),
-    borderWidth: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    // @ts-ignore
-    cursor: "pointer",
-  },
-  copyGlyph: {
-    fontSize: sc(13),
-    lineHeight: sc(15),
   },
   pillsRow: {
     flexDirection: "row",
@@ -948,21 +988,38 @@ const styles = StyleSheet.create({
     width: "100%",
     marginTop: sc(14),
   },
-  innerDivider: {
-    marginTop: sc(14),
-    marginBottom: sc(4),
-  },
   section: {
-    paddingHorizontal: sc(16),
+    paddingHorizontal: CARD_PADDING,
     marginTop: sc(12),
     zIndex: 50,
   },
   sectionTitle: {
     letterSpacing: 1,
-    marginBottom: sc(4),
   },
   field: {
     marginTop: sc(10),
+    zIndex: 1,
+  },
+  nicknameInputWrapper: {
+    position: "relative",
+  },
+  dropdown: {
+    position: "absolute",
+    top: sc(43),
+    left: 0,
+    right: 0,
+    borderRadius: sc(5),
+    borderWidth: 1,
+    overflow: "hidden",
+    zIndex: 100,
+  },
+  dropdownItem: {
+    paddingHorizontal: sc(8),
+    paddingVertical: sc(7),
+  },
+  dropdownItemText: {
+    fontFamily: "Proxima Nova Regular",
+    fontSize: sc(15),
   },
   labelRow: {
     flexDirection: "row",
@@ -991,11 +1048,12 @@ const styles = StyleSheet.create({
     outlineStyle: "none",
   },
   connectButton: {
-    position: "absolute",
-    bottom: sc(16),
-    left: sc(16),
-    right: sc(16),
-    height: sc(42),
+    // A step lighter than the toolbar's add-server green.
+    backgroundColor: "#3A8049",
+    marginTop: CARD_PADDING,
+    marginHorizontal: CARD_PADDING,
+    marginBottom: CARD_PADDING,
+    height: sc(46),
     borderRadius: sc(8),
     flexDirection: "row",
     justifyContent: "center",
@@ -1013,11 +1071,6 @@ const styles = StyleSheet.create({
 });
 
 const tooltipStyles = StyleSheet.create({
-  wrap: {
-    position: "relative",
-    // @ts-ignore
-    display: "inline-flex",
-  },
   bubble: {
     position: "absolute",
     bottom: "100%",

@@ -1,4 +1,6 @@
+import { useEffect } from "react";
 import { View, useWindowDimensions } from "react-native";
+import { useModalOverlay } from "../states/modalOverlay";
 
 interface IProps {
   onDismiss: () => void;
@@ -7,6 +9,13 @@ interface IProps {
 
 const StaticModal = (props: IProps) => {
   const { height, width } = useWindowDimensions();
+
+  // Lets the title bar dim itself to match this backdrop.
+  useEffect(() => {
+    const { open, close } = useModalOverlay.getState();
+    open();
+    return close;
+  }, []);
 
   return (
     <View

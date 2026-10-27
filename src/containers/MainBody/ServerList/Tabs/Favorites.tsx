@@ -62,7 +62,8 @@ const Favorites = () => {
       searchData.sortPing !== "none" ||
       searchData.sortPlayer !== "none" ||
       searchData.sortName !== "none" ||
-      searchData.sortMode !== "none";
+      searchData.sortMode !== "none" ||
+      searchData.sortLock !== "none";
 
     return !hasActiveFilters && !hasActiveSorting;
   }, [searchData]);
@@ -78,8 +79,14 @@ const Favorites = () => {
     })
   );
 
+  // Selecting the already-selected server again clears the selection (row
+  // re-click and Esc both go through here).
   const onSelect = (server: Server) => {
     stopQuery();
+    if (selected && selected.ip === server.ip && selected.port === server.port) {
+      setSelected(undefined);
+      return;
+    }
     setSelected(server);
     startQuery(server, "favorites");
   };
@@ -143,6 +150,7 @@ const Favorites = () => {
       >
         <List
           data={list}
+          onSelect={onSelect}
           renderItem={(item, index) => (
             <ServerItem
               key={`${item.ip}:${item.port}`}

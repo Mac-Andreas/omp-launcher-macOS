@@ -77,6 +77,10 @@ const Beta = () => {
     setAudioFix,
     renderFix,
     setRenderFix,
+    textFix,
+    setTextFix,
+    windowedMode,
+    setWindowedMode,
   } = useSettings();
 
   const revealLogs = () => {
@@ -186,6 +190,36 @@ const Beta = () => {
         })}
         value={renderFix}
         onChange={setRenderFix}
+      />
+
+      <View
+        style={[styles.divider, { backgroundColor: `${theme.textPrimary}14` }]}
+      />
+
+      <ToggleRow
+        label={t("settings_text_fix_label", { defaultValue: "Text fix" })}
+        help={t("settings_text_fix_help", {
+          defaultValue:
+            "Smooths SA-MP chat, dialog and on-screen text: turns on ClearType font smoothing (the Windows default) in the bottle and uses Microsoft's d3dx9 when present. Off reverts to Wine's defaults.",
+        })}
+        value={textFix}
+        onChange={setTextFix}
+      />
+
+      <View
+        style={[styles.divider, { backgroundColor: `${theme.textPrimary}14` }]}
+      />
+
+      <ToggleRow
+        label={t("settings_windowed_mode_label", {
+          defaultValue: "Windowed mode",
+        })}
+        help={t("settings_windowed_mode_help", {
+          defaultValue:
+            "Runs the game in a normal window with a border instead of true fullscreen, which is unstable under CrossOver. Resize it as you like; the size is remembered.",
+        })}
+        value={windowedMode}
+        onChange={setWindowedMode}
       />
     </ScrollView>
   );

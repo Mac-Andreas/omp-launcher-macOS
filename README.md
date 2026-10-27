@@ -16,6 +16,7 @@ Mac.
 |---|---|
 | **Mac with Apple Silicon** (M1/M2/M3/M4) | Intel Macs are not supported. |
 | **[CrossOver](https://www.codeweavers.com/crossover)** | Runs the Windows version of GTA: San Andreas on macOS. |
+| **Rosetta 2** | CrossOver needs it to run the game; without it the game never starts. Install with `softwareupdate --install-rosetta --agree-to-license`. |
 | **GTA: San Andreas v1.0** in a CrossOver bottle | SA-MP / open.mp only work with the **1.0** executable — Steam / Rockstar Launcher copies must be downgraded. |
 
 The launcher cannot install the game or Windows for you — set the two above up
@@ -27,27 +28,29 @@ once, then the launcher handles everything else automatically.
 
 ### Server browser
 
-| Favorites | Internet | Partners |
-|---|---|---|
-| ![Favorites](screenshots/01-server-browser-favorites.png) | ![Internet](screenshots/02-server-browser-internet.png) | ![Partners](screenshots/03-server-browser-partners.png) |
+![Server browser](screenshots/02-server-browser-internet.png)
+
+| Favorites | Partners |
+|---|---|
+| ![Favorites](screenshots/01-server-browser-favorites.png) | ![Partners](screenshots/03-server-browser-partners.png) |
+
+| Joining a server | Light theme |
+|---|---|
+| ![Join server](screenshots/04-join-server.png) | ![Light theme](screenshots/12-light-theme.png) |
 
 ### Settings
 
-| Overview | Installing SA-MP |
+| Overview | Preferences |
 |---|---|
-| ![Overview](screenshots/04-settings-overview.png) | ![Installing](screenshots/05-settings-overview-installing.png) |
+| ![Overview](screenshots/05-settings-overview.png) | ![Preferences](screenshots/06-settings-preferences.png) |
 
-| Preferences | Advanced |
+| Advanced | Privacy |
 |---|---|
-| ![Preferences](screenshots/06-settings-preferences.png) | ![Advanced](screenshots/07-settings-advanced.png) |
+| ![Advanced](screenshots/07-settings-advanced.png) | ![Privacy](screenshots/08-settings-privacy.png) |
 
-| Danger Zone | Danger Zone — SA-MP installed |
+| Beta | Credits |
 |---|---|
-| ![Danger Zone](screenshots/08-settings-danger-zone.png) | ![Danger Zone Installed](screenshots/09-settings-danger-zone-installed.png) |
-
-| License |
-|---|
-| ![License](screenshots/10-settings-license.png) |
+| ![Beta](screenshots/09-settings-beta.png) | ![Credits](screenshots/10-settings-credits.png) |
 
 ---
 
@@ -90,14 +93,15 @@ the postinstall step takes care of that.
 ## Updates
 
 The launcher checks **this repo's GitHub releases** for updates, not the
-upstream Windows channel. Versions are tagged `1.6.3-arm.N` — a Windows
-release like `1.6.4` will **not** prompt this build to update. Only when a new
-`-arm` tag ships here does the "Update available" badge appear.
+upstream Windows channel. Versions are tagged `<upstream>-arm.N` (betas
+`<upstream>-arm-beta.N`, e.g. `1.7.0-arm-beta.1`) — a Windows release like
+`1.7.1` will **not** prompt this build to update. Only when a new `-arm` tag
+ships here does the "Update available" badge appear.
 
 | Tag pattern | Source | Triggers update prompt? |
 |---|---|---|
-| `1.6.3-arm.N` | This fork | Yes |
-| `1.6.4` | Upstream Windows | No |
+| `1.7.0-arm.N` / `1.7.0-arm-beta.N` | This fork | Yes |
+| `1.7.1` | Upstream Windows | No |
 
 ---
 
@@ -127,6 +131,22 @@ All launcher functionality is the work of the
 [open.mp team](https://github.com/openmultiplayer/launcher). This fork only
 adds the macOS build path. Support upstream:
 <https://opencollective.com/openmultiplayer>
+
+---
+
+## Internationalization
+
+Translations are stored in `src/locales/translations`. To update an existing
+language, edit the matching file in that directory.
+
+To add a new language:
+
+1. Copy `src/locales/translations/en.ts` to a new file named after the language
+   code, for example `src/locales/translations/fr.ts`.
+2. Translate the string values while keeping the translation keys unchanged.
+3. Register the new language in `src/locales/index.ts` by adding it to
+   `loadTranslation`, `LanguageType`, and `LANGUAGE_METADATA`.
+4. Check that the language appears in the launcher settings.
 
 ---
 

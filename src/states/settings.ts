@@ -5,6 +5,8 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import { stateStorage } from "../utils/stateStorage";
 import { SAMPDLLVersions } from "../utils/types";
 
+const MAX_RECENT_NICKNAMES = 5;
+
 interface SettingsPersistentState {
   nickName: string;
   gtasaPath: string;
@@ -32,6 +34,14 @@ interface SettingsPersistentState {
   // GL version). On by default; steers GTA's D3D8 off the wined3d texture-lock
   // path that faults under CrossOver. Off reverts to Wine's defaults.
   renderFix: boolean;
+  // macOS text fix: prefer the bottle's native d3dx9_25.dll for the game exe so
+  // SA-MP's chat / textdraw text renders without Wine's grainy glyph edges. On
+  // by default; off reverts to Wine's builtin d3dx9.
+  textFix: boolean;
+  // macOS windowed mode: inject omp-windowedmode (borderless by default) so the
+  // game skips the exclusive-fullscreen D3D mode-set that is unstable under
+  // CrossOver. On by default.
+  windowedMode: boolean;
   // Anonymous usage telemetry. Opt-out: on by default, no startup prompt. Only
   // a once-per-day aggregated summary is sent (counts + time averages), never
   // anything identifying — just a random per-install id. Users can turn it off
@@ -40,7 +50,9 @@ interface SettingsPersistentState {
   // Retained for migration only — the consent prompt was removed when telemetry
   // moved to opt-out. No longer gates sending.
   telemetryConsentVersion: string;
+  recentNicknames: string[];
   setNickName: (name: string) => void;
+  addRecentNickname: (name: string) => void;
   setGTASAPath: (path: string) => void;
   setCustomGameExe: (fileName: string) => void;
   setSampVersion: (version: SAMPDLLVersions) => void;
@@ -51,6 +63,8 @@ interface SettingsPersistentState {
   setDebugDetailed: (enabled: boolean) => void;
   setAudioFix: (enabled: boolean) => void;
   setRenderFix: (enabled: boolean) => void;
+  setTextFix: (enabled: boolean) => void;
+  setWindowedMode: (enabled: boolean) => void;
   setTelemetryEnabled: (enabled: boolean) => void;
   setTelemetryConsentVersion: (version: string) => void;
 }
@@ -73,12 +87,27 @@ const useSettings = create<SettingsPersistentState>()(
       debugDetailed: false,
       audioFix: true,
       renderFix: true,
+      textFix: true,
+      windowedMode: true,
       telemetryEnabled: true,
       telemetryConsentVersion: "",
+      recentNicknames: [],
       setNickName: (name) =>
         set(() => {
           emitWithDelay("setNickName", name);
           return { nickName: name };
+        }),
+      addRecentNickname: (name) =>
+        set((state) => {
+          const trimmed = name.trim();
+          if (!trimmed) return state;
+          emitWithDelay("setRecentNickname", trimmed);
+          const rest = state.recentNicknames.filter(
+            (n) => n.toLowerCase() !== trimmed.toLowerCase()
+          );
+          return {
+            recentNicknames: [trimmed, ...rest].slice(0, MAX_RECENT_NICKNAMES),
+          };
         }),
       setGTASAPath: (path) => set({ gtasaPath: path }),
       setCustomGameExe: (fileName) => set({ customGameExe: fileName }),
@@ -90,6 +119,8 @@ const useSettings = create<SettingsPersistentState>()(
       setDebugDetailed: (enabled) => set({ debugDetailed: enabled }),
       setAudioFix: (enabled) => set({ audioFix: enabled }),
       setRenderFix: (enabled) => set({ renderFix: enabled }),
+      setTextFix: (enabled) => set({ textFix: enabled }),
+      setWindowedMode: (enabled) => set({ windowedMode: enabled }),
       setTelemetryEnabled: (enabled) => set({ telemetryEnabled: enabled }),
       setTelemetryConsentVersion: (version) =>
         set({ telemetryConsentVersion: version }),
@@ -101,7 +132,7 @@ const useSettings = create<SettingsPersistentState>()(
   )
 );
 
-["setNickName"].forEach((event) =>
+["setNickName", "setRecentNickname"].forEach((event) =>
   listen(event, (ev) => {
     if (ev.windowLabel !== appWindow.label) {
       useSettings.persist.rehydrate();

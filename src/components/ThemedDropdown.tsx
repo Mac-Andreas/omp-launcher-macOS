@@ -75,13 +75,12 @@ const ThemedDropdown = ({
     <View style={[styles.root, style]}>
       <Pressable
         onPress={() => setOpen((v) => !v)}
+        // Accent-tinted so it reads as a dropdown rather than a text field.
         style={[
           styles.field,
           {
-            backgroundColor: theme.textInputBackgroundColor,
-            borderColor: open
-              ? `${theme.primary}99`
-              : `${theme.textPrimary}1A`,
+            backgroundColor: `${theme.primary}14`,
+            borderColor: open ? `${theme.primary}99` : `${theme.primary}55`,
           },
         ]}
       >
@@ -110,7 +109,7 @@ const ThemedDropdown = ({
           })}
           <Text
             size={1}
-            color={`${theme.textPrimary}AA`}
+            color={theme.primary}
             style={{ transform: [{ rotate: open ? "180deg" : "0deg" }] }}
           >
             ▼
@@ -274,7 +273,7 @@ const styles = StyleSheet.create({
   badge: {
     paddingVertical: sc(1),
     paddingHorizontal: sc(6),
-    borderRadius: sc(999),
+    borderRadius: sc(4),
     borderWidth: 1,
   },
   badgeText: {

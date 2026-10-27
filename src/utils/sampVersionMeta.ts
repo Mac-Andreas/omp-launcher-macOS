@@ -66,7 +66,7 @@ export const buildSampVersionDropdownItems = (
     if (v === "03DL_samp.dll") {
       badges.push({ label: "DL", tone: "accent" });
     } else if (v === LATEST_SAMP_VERSION) {
-      badges.push({ label: "LATEST", tone: "primary" });
+      badges.push({ label: "LATEST", tone: "accent" });
     }
     const date = INSTALLABLE_DATES[v];
     if (date) badges.push({ label: date, tone: "neutral" });

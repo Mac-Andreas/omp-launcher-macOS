@@ -1,5 +1,5 @@
 import { t } from "i18next";
-import { memo, useRef } from "react";
+import { memo, useEffect, useRef } from "react";
 import { Pressable, StyleSheet, View } from "react-native";
 import Icon from "../../../components/Icon";
 import Text from "../../../components/Text";
@@ -7,11 +7,23 @@ import { images } from "../../../constants/images";
 import { useDraggableItem } from "../../../hooks/draggable";
 import { useContextMenu } from "../../../states/contextMenu";
 import { useJoinServerPrompt } from "../../../states/joinServerPrompt";
-import { useServers } from "../../../states/servers";
 import { useTheme } from "../../../states/theme";
+import { useGenericTempState } from "../../../states/genericStates";
+import { pingColor } from "../../../utils/pingColor";
 import { PING_TIMEOUT_VALUE } from "../../../utils/query";
 import { sc } from "../../../utils/sizeScaler";
 import { Server } from "../../../utils/types";
+import {
+  CELL_PADDING_LEFT,
+  LOCKED_COLOR,
+  NAME_MIN_WIDTH,
+  ROW_BORDER,
+  ROW_PADDING_RIGHT,
+  unlockedColor,
+  useColumnLayout,
+} from "./columns";
+
+const DOUBLE_PRESS_MS = 500;
 
 interface IProps {
   server: Server;
@@ -26,15 +38,23 @@ const ServerItem = memo((props: IProps) => {
   const { server, index, isDraggable = false, isBeingDragged = false } = props;
   const { theme, themeType } = useTheme();
   const lastPressTime = useRef(0);
+  const pendingDeselect = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { showPrompt, setServer } = useJoinServerPrompt();
   const { show: showContextMenu } = useContextMenu();
-  const { setSelected } = useServers();
+  const columns = useColumnLayout();
 
   const { attributes, listeners, setNodeRef, isDragging, style } =
     useDraggableItem(`${server.ip}:${server.port}`, isDraggable);
 
+  useEffect(
+    () => () => {
+      if (pendingDeselect.current) clearTimeout(pendingDeselect.current);
+    },
+    []
+  );
+
+  // Opens the join prompt; the row stays selected behind it.
   const onDoublePress = () => {
-    setSelected(undefined);
     setServer(server);
     showPrompt(true);
   };
@@ -44,49 +64,67 @@ const ServerItem = memo((props: IProps) => {
 
     const delta = Date.now() - lastPressTime.current;
 
-    if (delta < 500) {
+    if (delta < DOUBLE_PRESS_MS) {
       lastPressTime.current = 0;
+      if (pendingDeselect.current) {
+        clearTimeout(pendingDeselect.current);
+        pendingDeselect.current = null;
+      }
       onDoublePress();
     } else {
       lastPressTime.current = Date.now();
-      props.onSelect?.(server);
+      if (props.isSelected) {
+        // A click on the selected row deselects it (the tab's onSelect
+        // toggles), but only once the double-click window has passed, so a
+        // double-click opens the prompt without dropping the selection.
+        pendingDeselect.current = setTimeout(() => {
+          pendingDeselect.current = null;
+          props.onSelect?.(server);
+        }, DOUBLE_PRESS_MS);
+      } else {
+        props.onSelect?.(server);
+      }
     }
   };
 
-  const getServerStatusInfo = (
-    hasPassword: boolean,
-    ping: number,
-    itemBackgroundColor: string
-  ) => {
+  // Lock box: red locked / green open, each on a tint (dropped on the
+  // selected row so it doesn't clash with the selection colour); an offline
+  // or not-yet-queried server just shows a plain "?".
+  const getServerStatusInfo = (hasPassword: boolean, ping: number) => {
     if (hasPassword) {
       return {
-        color: "#eb4034",
-        backgroundColor: "#eb40343A",
+        color: LOCKED_COLOR,
+        backgroundColor: `${LOCKED_COLOR}3A`,
         title: t("locked"),
         icon: images.icons.locked,
       };
     } else if (ping < PING_TIMEOUT_VALUE) {
+      const green = unlockedColor(themeType);
       return {
-        color: "#7AF1AA",
-        backgroundColor: "#7AF1AA1A",
+        color: green,
+        backgroundColor: `${green}1A`,
         title: t("unlocked"),
         icon: images.icons.unlocked,
       };
     } else {
       return {
-        color: "#36363F",
-        backgroundColor: itemBackgroundColor,
+        // Brighter than textSecondary, which is too faint in dark mode.
+        color: `${theme.textPrimary}99`,
+        backgroundColor: "transparent",
         title: t("offline"),
-        icon: images.icons.unlocked,
+        icon: images.icons.unknown,
       };
     }
   };
 
-  const statusInfo = getServerStatusInfo(
-    server.hasPassword,
-    server.ping,
-    theme.itemBackgroundColor
-  );
+  const statusInfo = getServerStatusInfo(server.hasPassword, server.ping);
+
+  // Ping is coloured by its band only while the list is sorted by ping.
+  const sortPing = useGenericTempState((s) => s.searchData.sortPing);
+  const pingTextColor =
+    sortPing !== "none" && server.ping < PING_TIMEOUT_VALUE
+      ? pingColor(server.ping, themeType) ?? theme.textSecondary
+      : theme.textSecondary;
 
   return (
     <div
@@ -124,12 +162,33 @@ const ServerItem = memo((props: IProps) => {
             return e;
           }}
         >
-          <View style={styles.serverContainer}>
+          {/* The whole row, lock included, carries the hover (main.css, via
+              the id) and selection colours. */}
+          <View
+            id={
+              !props.isSelected
+                ? themeType === "dark"
+                  ? "server-list-item-dark"
+                  : "server-list-item-light"
+                : undefined
+            }
+            style={[
+              styles.serverContainer,
+              {
+                borderColor: props.isSelected ? "transparent" : undefined,
+                backgroundColor: props.isSelected
+                  ? theme.primary + "7D"
+                  : undefined,
+              },
+            ]}
+          >
             <View
               style={[
                 styles.iconContainer,
                 {
-                  backgroundColor: statusInfo.backgroundColor,
+                  backgroundColor: props.isSelected
+                    ? "transparent"
+                    : statusInfo.backgroundColor,
                   // @ts-ignore
                   userSelect: "none",
                 },
@@ -143,29 +202,9 @@ const ServerItem = memo((props: IProps) => {
                 color={statusInfo.color}
               />
             </View>
-            <View
-              id={
-                !props.isSelected
-                  ? themeType === "dark"
-                    ? "server-list-item-dark"
-                    : "server-list-item-light"
-                  : undefined
-              }
-              style={[
-                {
-                  flexDirection: "row",
-                  alignItems: "center",
-                  flex: 1,
-                  borderRadius: sc(5),
-                },
-                {
-                  borderColor: theme.primary,
-                  backgroundColor: props.isSelected
-                    ? theme.primary + "7D"
-                    : undefined,
-                },
-              ]}
-            >
+            {/* Name takes the remaining width; the other columns use the
+                shared layout (columns.ts) so they line up with the header. */}
+            <View style={styles.nameArea}>
               {server.usingOmp && (
                 <div
                   style={{
@@ -194,54 +233,47 @@ const ServerItem = memo((props: IProps) => {
                   {server.hostname}
                 </Text>
               </View>
-              <View
-                style={{
-                  flex: 0.5,
-                  minWidth: 300,
-                  flexDirection: "row",
-                  marginLeft: server.usingOmp ? -26 : 0,
-                }}
-              >
-                <View
-                  style={[
-                    styles.commonFieldContainer,
-                    styles.playersFieldContainer,
-                  ]}
+            </View>
+            <View
+              style={[
+                styles.commonFieldContainer,
+                styles.playersFieldContainer,
+                { width: columns.playersWidth },
+              ]}
+            >
+              <Text style={{ fontSize: sc(17) }} color={theme.textPrimary}>
+                {server.playerCount}
+                <Text
+                  style={{ fontSize: sc(17) }}
+                  color={theme.textPrimary + "AA"}
                 >
-                  <Text style={{ fontSize: sc(17) }} color={theme.textPrimary}>
-                    {server.playerCount}
-                    <Text
-                      style={{ fontSize: sc(17) }}
-                      color={theme.textPrimary + "AA"}
-                    >
-                      /{server.maxPlayers}
-                    </Text>
-                  </Text>
-                </View>
-                <View
-                  style={[
-                    styles.commonFieldContainer,
-                    styles.gameModeContainer,
-                  ]}
-                >
-                  <Text style={{ fontSize: sc(17) }} color={theme.textPrimary}>
-                    {server.gameMode}
-                  </Text>
-                </View>
-                <View
-                  style={[
-                    styles.commonFieldContainer,
-                    styles.pingFieldContainer,
-                  ]}
-                >
-                  <Text
-                    style={{ fontSize: sc(17) }}
-                    color={theme.textSecondary}
-                  >
-                    {server.ping === PING_TIMEOUT_VALUE ? "-" : server.ping}
-                  </Text>
-                </View>
-              </View>
+                  /{server.maxPlayers}
+                </Text>
+              </Text>
+            </View>
+            <View
+              style={[
+                styles.commonFieldContainer,
+                styles.gameModeContainer,
+                { width: columns.modeWidth },
+              ]}
+            >
+              {/* Centred when it fits; capped at the column width, a longer
+                  mode fills it from the left edge and ends in "…". */}
+              <Text style={styles.cellText} color={theme.textPrimary}>
+                {server.gameMode}
+              </Text>
+            </View>
+            <View
+              style={[
+                styles.commonFieldContainer,
+                styles.pingFieldContainer,
+                { width: columns.pingWidth },
+              ]}
+            >
+              <Text style={styles.cellText} color={pingTextColor}>
+                {server.ping === PING_TIMEOUT_VALUE ? "-" : server.ping}
+              </Text>
             </View>
           </View>
         </Pressable>
@@ -252,13 +284,28 @@ const ServerItem = memo((props: IProps) => {
 
 const styles = StyleSheet.create({
   pressableContainer: {
-    marginTop: sc(7),
+    // With the row's 2px of border below, rows stay sc(39) tall (List's
+    // ITEM_HEIGHT).
+    marginTop: sc(7) - 2,
   },
   serverContainer: {
-    height: sc(32),
+    height: sc(32) + 2,
     width: "100%",
     flexDirection: "row",
-    paddingRight: sc(5),
+    alignItems: "center",
+    paddingRight: ROW_PADDING_RIGHT,
+    borderRadius: sc(5),
+    // Always 1px so hover (main.css) doesn't shift the row. The hover colour
+    // comes from the id selector, so only the selected row (which has no id)
+    // sets a colour inline.
+    borderWidth: ROW_BORDER,
+  },
+  nameArea: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    height: "100%",
+    minWidth: NAME_MIN_WIDTH,
   },
   iconContainer: {
     height: sc(32),
@@ -276,20 +323,20 @@ const styles = StyleSheet.create({
     paddingRight: sc(10),
   },
   playersFieldContainer: {
-    paddingLeft: 5,
-    width: 80,
+    paddingLeft: CELL_PADDING_LEFT,
     alignItems: "flex-start",
   },
   pingFieldContainer: {
-    width: 50,
+    paddingHorizontal: CELL_PADDING_LEFT / 2,
     alignItems: "center",
   },
   gameModeContainer: {
-    flex: 1,
-    maxWidth: 420,
-    minWidth: 170,
-    paddingLeft: 10,
+    paddingHorizontal: CELL_PADDING_LEFT / 2,
     alignItems: "center",
+  },
+  cellText: {
+    fontSize: sc(17),
+    maxWidth: "100%",
   },
 });
 

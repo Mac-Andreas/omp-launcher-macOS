@@ -148,7 +148,7 @@ const Preferences = () => {
             hideSettings();
           }
         }}
-        maxVisibleItems={8}
+        maxVisibleItems={6}
       />
 
       <View

@@ -23,21 +23,25 @@ textarea {
 
 #server-list-item-dark {
   background-color: #30303880;
+  border-color: transparent;
   transition: 0.4s;
 }
 
 #server-list-item-dark:hover {
   background-color: #303038FF;
+  border-color: #FAFAFA2E;
   transition: 0.2s;
 }
 
 #server-list-item-light {
   background-color: #E9ECF280;
+  border-color: transparent;
   transition: 0.4s;
 }
 
 #server-list-item-light:hover {
   background-color: #E9ECF2FF;
+  border-color: #1A1A1E2E;
   transition: 0.2s;
 }
 
@@ -238,4 +242,8 @@ textarea {
    behind open.mp, not just the app's own content. */
 .modal-blur-backdrop {
   background-color: rgba(0, 0, 0, 0.58);
+}
+
+#main-container *:focus-visible {
+  outline: none;
 }

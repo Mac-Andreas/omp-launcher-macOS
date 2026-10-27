@@ -20,6 +20,7 @@ import { StyleSheet, View } from "react-native";
 import { DEBUG_MODE, IN_GAME, IN_GAME_PROCESS_ID } from "./constants/app";
 import LaunchOverlay from "./containers/LaunchOverlay";
 import LoadingScreen from "./containers/LoadingScreen";
+import { useIsWine, useWineCursorReset } from "./hooks/wine";
 import WindowTitleBar from "./containers/WindowTitleBar";
 import { changeLanguage } from "./locales";
 import { useFeedback } from "./states/feedback";
@@ -29,7 +30,7 @@ import { useNotification } from "./states/notification";
 import { usePersistentServers } from "./states/servers";
 import { useSettings } from "./states/settings";
 import { useTheme } from "./states/theme";
-import { throttle } from "./utils/debounce";
+import { debounce, throttle } from "./utils/debounce";
 import {
   getSelectedBottleGamePath,
   prepareSelectedBottleSampFiles,
@@ -50,6 +51,10 @@ import {
   telemetryReportListSize,
 } from "./utils/telemetry";
 
+const LOADING_WINDOW_SIZE = new LogicalSize(250, 300);
+const DEFAULT_WINDOW_SIZE = new LogicalSize(1000, 700);
+
+// Lazy load heavy components for better initial load time
 const MainView = lazy(() => import("./containers/MainBody"));
 const NavBar = lazy(() => import("./containers/NavBar"));
 const AddThirdPartyServerModal = lazy(
@@ -67,6 +72,8 @@ const FeedbackPrompt = lazy(() => import("./containers/FeedbackPrompt"));
 
 const App = memo(() => {
   const [loading, setLoading] = useState(!IN_GAME);
+  const isWine = useIsWine();
+  useWineCursorReset(isWine && !IN_GAME);
   const { theme } = useTheme();
   const { language } = useGenericPersistentState();
   const windowSize = useRef<PhysicalSize>();
@@ -108,6 +115,15 @@ const App = memo(() => {
 
       mainWindowSize.current = innerSize.toLogical(scaleFactor);
 
+      // If the window is already at the loading size (e.g. after a reload),
+      // do not capture it as the main window size.
+      if (
+        mainWindowSize.current.width === LOADING_WINDOW_SIZE.width &&
+        mainWindowSize.current.height === LOADING_WINDOW_SIZE.height
+      ) {
+        mainWindowSize.current = DEFAULT_WINDOW_SIZE;
+      }
+
       // Set window attributes for loading screen. Decorations stay ON the
       // whole time — toggling them at runtime drops the native Overlay
       // titlebar style and leaves a doubled-up standard titlebar.
@@ -122,7 +138,7 @@ const App = memo(() => {
       // anchored at the old top-left (off-centre). Same hazard the main-window
       // open path guards against below.
       await Promise.all([
-        appWindow.setSize(new LogicalSize(250, 300)),
+        appWindow.setSize(LOADING_WINDOW_SIZE),
         appWindow.setResizable(false),
         invoke("set_traffic_lights", { visible: false }),
       ]);
@@ -131,6 +147,12 @@ const App = memo(() => {
         appWindow.center();
       });
 
+      // Under Wine the window starts hidden (src-tauri/src/main.rs)
+      if (!IN_GAME && !(await appWindow.isVisible())) {
+        await appWindow.show();
+      }
+
+      // Reset favorite server list outdated cached data
       const { favorites, updateInFavoritesList } =
         usePersistentServers.getState();
       if (Array.isArray(favorites) && favorites.length > 0) {
@@ -146,8 +168,8 @@ const App = memo(() => {
 
       await Promise.all([
         fetchServers(),
-        fetchUpdateInfo(),
         generateLanguageFilters(),
+        ...(IN_GAME ? [] : [fetchUpdateInfo()]),
       ]);
     } finally {
       endTimer();
@@ -188,7 +210,7 @@ const App = memo(() => {
 
   useEffect(() => {
     if (!loading) {
-      const targetSize = mainWindowSize.current || new LogicalSize(1000, 700);
+      const targetSize = mainWindowSize.current || DEFAULT_WINDOW_SIZE;
 
       // macOS Tauri 1.x: center() before the resize has settled lands the
       // window in the previous (loading-screen) frame, leaving the real frame
@@ -291,6 +313,7 @@ const App = memo(() => {
 
   useEffect(() => {
     let killResizeListener: (() => void) | null = null;
+    let killTrafficLightListeners: (() => void)[] = [];
 
     const setupListeners = async () => {
       if (!DEBUG_MODE) {
@@ -303,6 +326,21 @@ const App = memo(() => {
       }
 
       killResizeListener = await appWindow.onResized(windowResizeListener);
+
+      // AppKit snaps the traffic lights back to their default spot on every
+      // titlebar relayout: resize, focus change, appearance change. Re-apply
+      // the nudge after each, trailing, so the last relayout of a resize drag
+      // (which the throttled resize listener above can drop) is covered too.
+      if (!IN_GAME) {
+        const realign = debounce(() => {
+          invoke("realign_traffic_lights").catch(() => {});
+        }, 80);
+        killTrafficLightListeners = await Promise.all([
+          appWindow.onResized(realign),
+          appWindow.onFocusChanged(realign),
+          appWindow.onThemeChanged(realign),
+        ]);
+      }
     };
 
     const setupGameMonitoring = () => {
@@ -341,6 +379,7 @@ const App = memo(() => {
 
     return () => {
       killResizeListener?.();
+      killTrafficLightListeners.forEach((kill) => kill());
       if (processCheckInterval.current) {
         clearInterval(processCheckInterval.current);
       }

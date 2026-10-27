@@ -20,7 +20,6 @@ import RecentlyJoined from "./ServerList/Tabs/RecentlyJoined";
 const MainView = memo(() => {
   const { filterMenu, setSearchData } = useGenericTempState();
   const { sideLists } = useGenericPersistentState();
-  const { theme } = useTheme();
   const { listType } = useGenericTempState();
 
   const handleSearchChange = useCallback(
@@ -53,7 +52,6 @@ const MainView = memo(() => {
         {currentList}
         {sideLists && <ServerInfo />}
       </View>
-      <View style={[styles.bottomDivider, { backgroundColor: `${theme.textPrimary}1F` }]} />
       <BottomBar />
       {filterMenu && <FiltersModal />}
     </View>
@@ -147,10 +145,6 @@ const styles = StyleSheet.create({
     flex: 1,
     width: "100%",
     flexDirection: "row",
-  },
-  bottomDivider: {
-    height: 1,
-    width: "100%",
   },
 });
 

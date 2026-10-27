@@ -8,8 +8,11 @@ import {
   View,
 } from "react-native";
 import { t } from "i18next";
+import Icon from "../../components/Icon";
 import Text from "../../components/Text";
+import { images } from "../../constants/images";
 import { useGameLaunch } from "../../states/gameLaunch";
+import { useModalOverlay } from "../../states/modalOverlay";
 import { useTheme } from "../../states/theme";
 import { sc } from "../../utils/sizeScaler";
 
@@ -18,6 +21,8 @@ import { sc } from "../../utils/sizeScaler";
 // continuously until the launch finishes or is cancelled.
 // Amber used for the paused state (launch held behind a pre-launch prompt).
 const PAUSED_COLOR = "#E8A317";
+// Same red as the destructive buttons in Settings.
+const CANCEL_COLOR = "#C24B43";
 
 const LaunchOverlay = () => {
   const { launching, paused, gateOpen, setLaunching, setPaused } =
@@ -43,6 +48,15 @@ const LaunchOverlay = () => {
     loop.start();
     return () => loop.stop();
   }, [launching, paused, anim]);
+
+  // Counts as an open modal while up, so the title bar dims along with it
+  // like it does for the StaticModal popups.
+  useEffect(() => {
+    if (!launching) return;
+    const { open, close } = useModalOverlay.getState();
+    open();
+    return close;
+  }, [launching]);
 
   if (!launching) return null;
 
@@ -106,10 +120,11 @@ const LaunchOverlay = () => {
           )}
         </View>
         <TouchableOpacity
-          style={[styles.cancelButton, { borderColor: `${theme.textPrimary}44` }]}
+          style={[styles.cancelButton, { backgroundColor: CANCEL_COLOR }]}
           onPress={cancel}
         >
-          <Text semibold size={1} color={theme.textPrimary}>
+          <Icon svg image={images.icons.close} size={sc(11)} color="#FFFFFF" />
+          <Text semibold size={1} color="#FFFFFF">
             {t("cancel")}
           </Text>
         </TouchableOpacity>
@@ -128,7 +143,8 @@ const styles = StyleSheet.create({
     zIndex: 1000,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(0,0,0,0.55)",
+    // Matches .modal-blur-backdrop, which the title bar uses to dim with it.
+    backgroundColor: "rgba(0,0,0,0.58)",
   },
   // While the audio-crash gate (MessageBox, zIndex 61) is open, our backdrop
   // must sit beneath it — otherwise it double-dims the dialog. The MessageBox
@@ -146,22 +162,27 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: sc(16),
   },
+  // The running segment is a pill inset inside the pill-shaped track. The
+  // inset also keeps the fill's rounded ends off the track's edge, which
+  // avoids the 1px seam RNW leaves when both rounded edges coincide.
   track: {
-    height: sc(8),
-    borderRadius: sc(4),
+    height: sc(10),
+    padding: 2,
+    borderRadius: sc(999),
     overflow: "hidden",
   },
   fill: {
     height: "100%",
-    // No borderRadius on the fill: the track already clips with overflow
-    // hidden + radius, and rounding both leaves a 1px seam under RNW.
+    borderRadius: sc(999),
   },
   cancelButton: {
     marginTop: sc(4),
     paddingVertical: sc(7),
-    paddingHorizontal: sc(22),
+    paddingHorizontal: sc(18),
     borderRadius: sc(6),
-    borderWidth: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: sc(7),
   },
 });
 

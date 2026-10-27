@@ -21,6 +21,8 @@ pub async fn inject(
     debug_detailed: bool,
     audio_fix: bool,
     render_fix: bool,
+    text_fix: bool,
+    windowed_mode: bool,
 ) -> std::result::Result<(), String> {
     let actual_omp_file = if *crate::NO_OMP_FLAG.lock().unwrap() {
         ""
@@ -36,6 +38,7 @@ pub async fn inject(
 
     #[cfg(target_os = "windows")]
     let injector_path: Option<std::path::PathBuf> = None;
+    crate::ipc::ensure_listening();
 
     match injector::run_samp(
         name,
@@ -51,6 +54,8 @@ pub async fn inject(
         debug_detailed,
         audio_fix,
         render_fix,
+        text_fix,
+        windowed_mode,
     )
     .await
     {
@@ -75,6 +80,16 @@ pub fn get_gtasa_path_from_samp() -> String {
 #[tauri::command]
 pub fn get_gtasa_path_for_bottle(bottle_name: String) -> String {
     samp::get_gtasa_path_for_bottle(&bottle_name)
+}
+
+#[tauri::command]
+pub fn get_model_cache_folder() -> std::result::Result<String, String> {
+    samp::get_model_cache_folder()
+}
+
+#[tauri::command]
+pub fn set_model_cache_folder(folder: String) -> std::result::Result<String, String> {
+    samp::set_model_cache_folder(folder)
 }
 
 #[tauri::command]
@@ -105,24 +120,15 @@ pub fn get_samp_favorite_list() -> String {
 
 #[tauri::command]
 pub fn resolve_hostname(hostname: String) -> std::result::Result<String, String> {
-    use std::net::{IpAddr, ToSocketAddrs};
+    helpers::resolve_hostname_to_ipv4(&hostname)
+}
 
-    if hostname.is_empty() {
-        return Err("Hostname cannot be empty".to_string());
-    }
-
-    let addr = format!("{}:80", hostname);
-    let addrs = addr
-        .to_socket_addrs()
-        .map_err(|e| format!("Failed to resolve hostname '{}': {}", hostname, e))?;
-
-    for ip in addrs {
-        if let IpAddr::V4(ipv4) = ip.ip() {
-            return Ok(ipv4.to_string());
-        }
-    }
-
-    Err(format!("No IPv4 address found for hostname '{}'", hostname))
+#[tauri::command]
+pub fn is_wine() -> bool {
+    #[cfg(windows)]
+    return crate::wine::is_wine();
+    #[cfg(not(windows))]
+    false
 }
 
 #[cfg(target_os = "windows")]

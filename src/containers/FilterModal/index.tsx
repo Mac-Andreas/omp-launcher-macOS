@@ -18,7 +18,15 @@ const FiltersModal = () => {
         style={styles.backdrop}
         onPress={() => showFilterMenu(false)}
       />
-      <View style={[styles.modal, { backgroundColor: theme.secondary }]}>
+      <View
+        style={[
+          styles.modal,
+          {
+            backgroundColor: theme.secondary,
+            borderColor: `${theme.textPrimary}1F`,
+          },
+        ]}
+      >
         <View>
           <Text semibold size={2} color={theme.textPrimary}>
             {t("filters")}:
@@ -118,8 +126,11 @@ const styles = StyleSheet.create({
   modal: {
     position: "absolute",
     flexDirection: "column",
-    top: sc(46),
+    // Leaves a gap below the filter button so its active-filter dot, which
+    // hangs off the button's bottom edge, isn't covered.
+    top: sc(54),
     left: 0,
+    borderWidth: 1,
     width: sc(250),
     height: sc(400),
     padding: sc(10),

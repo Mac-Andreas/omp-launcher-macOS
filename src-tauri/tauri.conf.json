@@ -8,7 +8,7 @@
   },
   "package": {
     "productName": "omp-launcher",
-    "version": "1.6.3-arm-beta.2"
+    "version": "1.7.0-arm-beta.1"
   },
   "tauri": {
     "allowlist": {
@@ -91,6 +91,7 @@
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
         "userAgent": "omp-launcher",
+        "fileDropEnabled": false,
         "center": true
       }
     ],

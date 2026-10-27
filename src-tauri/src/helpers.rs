@@ -108,6 +108,28 @@ pub fn kill_game_processes() -> u32 {
     killed
 }
 
+// resolves a hostname to its first ipv4 address
+pub fn resolve_hostname_to_ipv4(hostname: &str) -> std::result::Result<String, String> {
+    use std::net::{IpAddr, ToSocketAddrs};
+
+    if hostname.is_empty() {
+        return Err("Hostname cannot be empty".to_string());
+    }
+
+    let addr = format!("{}:80", hostname);
+    let addrs = addr
+        .to_socket_addrs()
+        .map_err(|e| format!("Failed to resolve hostname '{}': {}", hostname, e))?;
+
+    for ip in addrs {
+        if let IpAddr::V4(ipv4) = ip.ip() {
+            return Ok(ipv4.to_string());
+        }
+    }
+
+    Err(format!("No IPv4 address found for hostname '{}'", hostname))
+}
+
 pub fn copy_files(src: impl AsRef<Path>, dest: impl AsRef<Path>) -> crate::errors::Result<()> {
     let files = fs::read_dir(src).map_err(|e| crate::errors::LauncherError::from(e))?;
 

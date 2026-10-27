@@ -13,6 +13,8 @@ mod ipc;
 mod query;
 mod samp;
 mod validation;
+#[cfg(windows)]
+mod wine;
 
 #[path = "deeplink/lib.rs"]
 #[cfg(target_os = "windows")]
@@ -55,16 +57,60 @@ async fn main() {
         deeplink::prepare(DEEPLINK_IDENTIFIER);
     }
 
-    let log_path = dirs_next::data_local_dir()
-        .map(|p| p.join(DATA_DIR_NAME))
-        .and_then(|dir| {
-            fs::create_dir_all(&dir).ok()?;
-            Some(dir.join(LOG_FILE_NAME))
-        })
-        .unwrap_or_else(|| std::env::temp_dir().join(LOG_FILE_NAME));
+    // Windows logs next to the executable, falling back to local app data. On
+    // macOS the executable sits inside the signed .app bundle, so the log goes
+    // straight to local app data instead.
+    #[cfg(windows)]
+    {
+        let exe_log_result = env::current_exe().and_then(|exe| {
+            simple_logging::log_to_file(exe.with_file_name(LOG_FILE_NAME), LevelFilter::Info)
+        });
 
-    if let Err(e) = simple_logging::log_to_file(&log_path, LevelFilter::Info) {
-        eprintln!("Failed to initialize logging at {:?}: {}", log_path, e);
+        if let Err(exe_log_error) = exe_log_result {
+            let local_log_result = dirs_next::data_local_dir()
+                .ok_or_else(|| {
+                    std::io::Error::new(std::io::ErrorKind::NotFound, "Local app data unavailable")
+                })
+                .and_then(|data_dir| {
+                    let log_dir = data_dir.join(DATA_DIR_NAME);
+                    fs::create_dir_all(&log_dir)?;
+                    simple_logging::log_to_file(log_dir.join(LOG_FILE_NAME), LevelFilter::Info)
+                });
+
+            match local_log_result {
+                Ok(()) => log::warn!(
+                    "Failed to create log next to executable: {}; using local app data",
+                    exe_log_error
+                ),
+                Err(local_log_error) => {
+                    eprintln!(
+                        "Failed to initialize logging: {}; local app data fallback failed: {}",
+                        exe_log_error, local_log_error
+                    );
+                    simple_logging::log_to_stderr(LevelFilter::Info);
+                }
+            }
+        }
+    }
+
+    #[cfg(not(windows))]
+    {
+        let log_path = dirs_next::data_local_dir()
+            .map(|p| p.join(DATA_DIR_NAME))
+            .and_then(|dir| {
+                fs::create_dir_all(&dir).ok()?;
+                Some(dir.join(LOG_FILE_NAME))
+            })
+            .unwrap_or_else(|| std::env::temp_dir().join(LOG_FILE_NAME));
+
+        if let Err(e) = simple_logging::log_to_file(&log_path, LevelFilter::Info) {
+            eprintln!("Failed to initialize logging at {:?}: {}", log_path, e);
+        }
+    }
+
+    #[cfg(windows)]
+    if let Err(error) = samp::get_model_cache_folder() {
+        log::warn!("Could not initialize SA-MP model cache folder: {}", error);
     }
 
     #[cfg(windows)]
@@ -91,7 +137,10 @@ async fn main() {
     }
 
     if let Err(e) = run_tauri_app().await {
-        error!("Failed to run Tauri app: {}", e);
+        let message = e.to_string();
+        #[cfg(windows)]
+        wine::show_webview_startup_error(&message);
+        error!("Failed to run Tauri app: {}", message);
         exit(1);
     }
 }
@@ -138,9 +187,17 @@ async fn handle_cli_args() -> Result<()> {
                     &omp_client_path
                 };
 
+                // resolve hostname to ipv4 so the game does not truncate hyphenated hosts
+                let host = args.host.as_ref().unwrap();
+                let resolved_host =
+                    helpers::resolve_hostname_to_ipv4(host).unwrap_or_else(|e| {
+                        info!("Failed to resolve hostname '{}', using raw value: {}", host, e);
+                        host.clone()
+                    });
+
                 run_samp(
                     args.name.as_ref().unwrap(),
-                    args.host.as_ref().unwrap(),
+                    &resolved_host,
                     args.port.unwrap(),
                     gamepath,
                     &format!("{}/{}", gamepath, SAMP_DLL),
@@ -150,6 +207,8 @@ async fn handle_cli_args() -> Result<()> {
                     None,
                     false,
                     false,
+                    true,
+                    true,
                     true,
                     true,
                 )
@@ -203,11 +262,14 @@ async fn run_tauri_app() -> Result<()> {
             commands::inject,
             commands::get_gtasa_path_from_samp,
             commands::get_gtasa_path_for_bottle,
+            commands::get_model_cache_folder,
+            commands::set_model_cache_folder,
             commands::get_nickname_from_samp,
             commands::get_samp_favorite_list,
             commands::rerun_as_admin,
             commands::resolve_hostname,
             commands::is_process_alive,
+            commands::is_wine,
             commands::log_info,
             commands::log_warn,
             commands::log_error,
@@ -233,7 +295,7 @@ async fn run_tauri_app() -> Result<()> {
             query::query_server,
             ipc::send_message_to_game
         ])
-        .run(tauri::generate_context!());
+        .run(tauri_context());
 
     match builder_result {
         Ok(_) => Ok(()),
@@ -242,6 +304,24 @@ async fn run_tauri_app() -> Result<()> {
             e
         ))),
     }
+}
+
+fn tauri_context() -> tauri::Context<tauri::utils::assets::EmbeddedAssets> {
+    #[allow(unused_mut)]
+    let mut context = tauri::generate_context!();
+
+    #[cfg(windows)]
+    if wine::is_wine() {
+        let args = wine::browser_args();
+        for window in &mut context.config_mut().tauri.windows {
+            window.additional_browser_args = args.clone();
+            // Wine cannot show the transparent window before the page draws,
+            // so it would flash white. The frontend shows it once it is sized.
+            window.visible = false;
+        }
+    }
+
+    context
 }
 
 fn setup_tauri_app(app: &mut tauri::App) -> std::result::Result<(), Box<dyn std::error::Error>> {
@@ -256,6 +336,10 @@ fn setup_tauri_app(app: &mut tauri::App) -> std::result::Result<(), Box<dyn std:
             WINDOW_MIN_WIDTH,
             WINDOW_MIN_HEIGHT,
         )))?;
+
+        #[cfg(windows)]
+        wine::round_window_corners(&main_window);
+
         // Hide the native traffic lights before the window is shown so the
         // loading splash has no window chrome — the frontend reveals them
         // again once the main UI is ready.
@@ -263,8 +347,16 @@ fn setup_tauri_app(app: &mut tauri::App) -> std::result::Result<(), Box<dyn std:
         commands::set_traffic_lights_visible(&main_window, false);
         // Always open centred (otherwise macOS may restore an old position).
         let _ = main_window.center();
-        let _ = main_window.show();
-        let _ = main_window.set_focus();
+        // Under Wine the window starts hidden and the frontend shows it once it
+        // is sized (see tauri_context), so don't show it early there.
+        #[cfg(windows)]
+        let show_now = !wine::is_wine();
+        #[cfg(not(windows))]
+        let show_now = true;
+        if show_now {
+            let _ = main_window.show();
+            let _ = main_window.set_focus();
+        }
     }
 
     #[cfg(target_os = "macos")]
@@ -281,7 +373,7 @@ fn setup_tauri_app(app: &mut tauri::App) -> std::result::Result<(), Box<dyn std:
     #[cfg(windows)]
     setup_deeplinks(handle.clone())?;
 
-    ipc::listen_for_ipc(handle);
+    ipc::init_ipc(handle);
     Ok(())
 }
 

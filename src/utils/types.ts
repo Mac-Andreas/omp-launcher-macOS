@@ -90,6 +90,9 @@ export interface SearchData {
   sortPing: SortType;
   sortName: SortType;
   sortMode: SortType;
+  // Lock column: "descending" = open servers first, "ascending" = passworded
+  // first (see applyLockSorting).
+  sortLock: SortType;
   languages: string[];
 }
 

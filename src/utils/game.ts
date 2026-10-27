@@ -12,7 +12,7 @@ import { useGameLaunch } from "../states/gameLaunch";
 import { useJoinServerPrompt } from "../states/joinServerPrompt";
 import { useMessageBox } from "../states/messageModal";
 import { useNotification } from "../states/notification";
-import { usePersistentServers, useServers } from "../states/servers";
+import { usePersistentServers } from "../states/servers";
 import { useSettings } from "../states/settings";
 import { useSettingsModal } from "../states/settingsModal";
 import { fetchServers, getIpAddress } from "../utils/helpers";
@@ -245,17 +245,15 @@ export const startGame = async (
   const { show: showSettings } = useSettingsModal.getState();
   const { sampVersion, customGameExe } = useSettings.getState();
   const { showPrompt, setServer } = useJoinServerPrompt.getState();
-  const { setSelected } = useServers.getState();
 
   if (IN_GAME) {
     invoke("send_message_to_game", {
       id: IN_GAME_PROCESS_ID,
-      message: password.length
-        ? `connect:${await getIpAddress(server.ip)}:${
-            server.port
-          }:${nickname}:${password}`
-        : `connect:${await getIpAddress(server.ip)}:${server.port}:${nickname}`,
+      message: `connectv2:${await getIpAddress(server.ip)}:${
+        server.port
+      }:${encodeURIComponent(nickname)}:${encodeURIComponent(password)}`,
     });
+    useSettings.getState().addRecentNickname(nickname);
     return;
   }
 
@@ -450,12 +448,18 @@ export const startGame = async (
     sampVersion === "custom"
       ? idealSAMPDllPath
       : file
-      ? await getLocalPath(file.path, file.name)
-      : idealSAMPDllPath;
+        ? await getLocalPath(file.path, file.name)
+        : idealSAMPDllPath;
 
   const { setLaunching, setPaused, setGateOpen } = useGameLaunch.getState();
-  const { debugMode, debugDetailed, audioFix, renderFix } =
-    useSettings.getState();
+  const {
+    debugMode,
+    debugDetailed,
+    audioFix,
+    renderFix,
+    textFix,
+    windowedMode,
+  } = useSettings.getState();
 
   // The audio route we applied for this launch (default-device switch and/or
   // our aggregate device), so we can undo it when the game exits. null = we
@@ -502,11 +506,14 @@ export const startGame = async (
       debugDetailed: debugMode && debugDetailed,
       audioFix,
       renderFix,
+      textFix,
+      windowedMode,
     })
       .then(() => {
+      // The server stays selected in the list after launching.
       addToRecentlyJoined(server);
-      setSelected(undefined);
       telemetryGameJoin(`${server.ip}:${server.port}`, server.hostname, server.usingOmp);
+      useSettings.getState().addRecentNickname(nickname);
     })
     .catch((e) => {
       if (e === "need_admin") {

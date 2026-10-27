@@ -7,6 +7,7 @@ import { getInjectorRelease, getUpdateInfo } from "../../api/apis";
 import Icon from "../../components/Icon";
 import Text from "../../components/Text";
 import { validFileChecksums } from "../../constants/app";
+import { useIsWine } from "../../hooks/wine";
 import { images } from "../../constants/images";
 import i18n from "../../locales";
 import { UpdateInfo, useAppState } from "../../states/app";
@@ -43,9 +44,31 @@ const INITIAL_DOWNLOAD_STATE: DownloadProgress = {
   percent: 0,
 };
 
+// Version of tools/injector.exe bundled into the launcher
+// (github.com/Mac-Andreas/omp-wine-injector). Bump together with that file.
+const BUNDLED_INJECTOR_VERSION = "1.1.0";
+
+// True when version a (e.g. "v1.2.0") is newer than b; unparseable parts
+// count as 0.
+const isNewerVersion = (a: string, b: string): boolean => {
+  const parse = (v: string) =>
+    v
+      .replace(/^v/i, "")
+      .split(".")
+      .map((part) => parseInt(part, 10) || 0);
+  const pa = parse(a);
+  const pb = parse(b);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const diff = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (diff !== 0) return diff > 0;
+  }
+  return false;
+};
+
 const LoadingScreen = ({ onEnd }: LoadingScreenProps) => {
   const { theme, themeType } = useTheme();
   const { language } = useGenericPersistentState();
+  const isWine = useIsWine();
   const [loadingStage, setLoadingStage] = useState<LoadingStage>(
     LoadingStage.INITIALIZING
   );
@@ -332,6 +355,22 @@ const LoadingScreen = ({ onEnd }: LoadingScreenProps) => {
       const release = await getInjectorRelease();
       if (!release.success || !release.data) return;
 
+      // The launcher bundles an injector (tools/injector.exe) and the Rust side
+      // prefers a downloaded one when present. Only a release newer than the
+      // bundled build is worth using; an older download is removed so it can't
+      // mask fixes in the bundled injector.
+      if (!isNewerVersion(release.data.version, BUNDLED_INJECTOR_VERSION)) {
+        const dir = await path.appLocalDataDir();
+        const stale = await path.join(dir, "injector.exe");
+        if (await fs.exists(stale)) {
+          await fs.removeFile(stale);
+          Log.info(
+            `[injector] removed v${release.data.version} download; bundled v${BUNDLED_INJECTOR_VERSION} is newer`
+          );
+        }
+        return;
+      }
+
       if (release.data.version === injectorVersion) {
         const dir = await path.appLocalDataDir();
         const dest = await path.join(dir, "injector.exe");
@@ -483,6 +522,7 @@ const LoadingScreen = ({ onEnd }: LoadingScreenProps) => {
     () => ({
       appView: {
         backgroundColor: theme.secondary,
+        ...(isWine && { borderRadius: 0 }),
       },
       progressBarContainer: {
         backgroundColor: theme.serverListItemBackgroundColor,
@@ -492,7 +532,7 @@ const LoadingScreen = ({ onEnd }: LoadingScreenProps) => {
         backgroundColor: theme.primary,
       },
     }),
-    [theme, downloadInfo.percent]
+    [theme, downloadInfo.percent, isWine]
   );
 
   const progressBar = useMemo(() => {
