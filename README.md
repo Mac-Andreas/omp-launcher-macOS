@@ -14,7 +14,7 @@ Mac.
 
 | Thing | Why |
 |---|---|
-| **Mac with Apple Silicon** (M1/M2/M3/M4) | Intel Macs are not supported. |
+| **Mac with Apple Silicon** (M1 and above with latest MacOS) | Intel Macs are not supported. |
 | **[CrossOver](https://www.codeweavers.com/crossover)** | Runs the Windows version of GTA: San Andreas on macOS. |
 | **Rosetta 2** | CrossOver needs it to run the game; without it the game never starts. Install with `softwareupdate --install-rosetta --agree-to-license`. |
 | **GTA: San Andreas v1.0** in a CrossOver bottle | SA-MP / open.mp only work with the **1.0** executable — Steam / Rockstar Launcher copies must be downgraded. |
