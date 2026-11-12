@@ -15,6 +15,25 @@ mod samp;
 mod validation;
 #[cfg(windows)]
 mod wine;
+#[cfg(windows)]
+mod wine_overlay;
+
+// Upstream's Wine support is for the Windows launcher running under Wine on
+// Linux. The macOS launcher runs natively (the game runs under CrossOver), so
+// ipc.rs gets the same calls as no-ops here.
+#[cfg(not(windows))]
+mod wine {
+    pub fn is_wine() -> bool { false }
+    pub fn browser_args() -> Option<String> { None }
+}
+#[cfg(not(windows))]
+mod wine_overlay {
+    use tauri::Window;
+    pub fn inject_hook(_app: &tauri::AppHandle, _game_pid: i32) {}
+    pub fn attach(_window: &Window, _game_pid: i32) {}
+    pub fn close(window: &Window) { let _ = window.close(); }
+    pub fn reopen(_window: &Window) -> bool { false }
+}
 
 #[path = "deeplink/lib.rs"]
 #[cfg(target_os = "windows")]

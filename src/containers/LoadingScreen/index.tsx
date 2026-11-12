@@ -7,6 +7,7 @@ import { getInjectorRelease, getUpdateInfo } from "../../api/apis";
 import Icon from "../../components/Icon";
 import Text from "../../components/Text";
 import { validFileChecksums } from "../../constants/app";
+import { wineOverlayResource } from "../../constants/wineOverlay";
 import { useIsWine } from "../../hooks/wine";
 import { images } from "../../constants/images";
 import i18n from "../../locales";
@@ -34,6 +35,7 @@ enum LoadingStage {
   DOWNLOADING_SAMP = "DOWNLOADING_SAMP",
   DOWNLOADING_OMP = "DOWNLOADING_OMP",
   UPDATING_INJECTOR = "UPDATING_INJECTOR",
+  DOWNLOADING_WINE_OVERLAY = "DOWNLOADING_WINE_OVERLAY",
   EXTRACTING = "EXTRACTING",
   COMPLETE = "COMPLETE",
 }
@@ -226,6 +228,23 @@ const LoadingScreen = ({ onEnd }: LoadingScreenProps) => {
     [resetDownloadState, updateDownloadProgress]
   );
 
+  const downloadWineOverlayFile = useCallback(
+    async (dllPath: string, downloadUrl: string) => {
+      setLoadingStage(LoadingStage.DOWNLOADING_WINE_OVERLAY);
+      setCurrentTask("Downloading Wine overlay DLL...");
+      resetDownloadState();
+
+      abortController.current = new AbortController();
+      await download(downloadUrl, dllPath, (progress, total) => {
+        if (!abortController.current?.signal.aborted) {
+          updateDownloadProgress(progress, total);
+        }
+      });
+      resetDownloadState();
+    },
+    [resetDownloadState, updateDownloadProgress]
+  );
+
   const collectFiles = useCallback(
     (parent: FileEntry, list: string[]): void => {
       if (parent.children?.length) {
@@ -406,6 +425,68 @@ const LoadingScreen = ({ onEnd }: LoadingScreenProps) => {
       resetDownloadState();
     }
   }, [resetDownloadState, updateDownloadProgress]);
+  const processWineOverlayVerification = useCallback(async () => {
+    const isWine = await invoke<boolean>("is_wine").catch(() => false);
+    if (!isWine) return;
+
+    const resource = wineOverlayResource;
+    if (!resource) {
+      try {
+        const dir = await path.appLocalDataDir();
+        const dllPath = await path.join(dir, "omp", "omp-wine.dll");
+        if (await fs.exists(dllPath)) {
+          await fs.removeFile(dllPath).catch(() => {});
+        }
+      } catch (error) {
+        Log.warn("Could not clear an unconfigured Wine overlay DLL:", error);
+      }
+      Log.warn("Wine overlay DLL URL and MD5 are not configured yet");
+      return;
+    }
+
+    try {
+      const dir = await path.appLocalDataDir();
+      const ompFolder = await path.join(dir, "omp");
+      const dllPath = await path.join(ompFolder, "omp-wine.dll");
+
+      if (!(await fs.exists(ompFolder))) {
+        await fs.createDir(ompFolder, { recursive: true });
+      }
+
+      const getMd5 = async () => {
+        if (!(await fs.exists(dllPath))) return undefined;
+        const checksums = await invoke<string[]>("get_checksum_of_files", {
+          list: [dllPath],
+        });
+        return checksums[0]?.split("|")[1]?.toLowerCase();
+      };
+
+      if ((await getMd5()) === resource.md5.toLowerCase()) {
+        Log.info("Wine overlay DLL is up to date");
+        return;
+      }
+
+      if (await fs.exists(dllPath)) {
+        await fs.removeFile(dllPath);
+      }
+
+      try {
+        await downloadWineOverlayFile(dllPath, resource.downloadUrl);
+      } catch (error) {
+        await fs.removeFile(dllPath).catch(() => {});
+        throw error;
+      }
+
+      if ((await getMd5()) !== resource.md5.toLowerCase()) {
+        await fs.removeFile(dllPath).catch(() => {});
+        throw new Error("Downloaded Wine overlay DLL failed MD5 validation");
+      }
+
+      Log.info("Wine overlay DLL downloaded and verified");
+    } catch (error) {
+      Log.error("Wine overlay DLL download failed:", error);
+    }
+  }, [downloadWineOverlayFile]);
 
   const processFileChecksums = useCallback(
     async (isInitialLoad = true) => {
@@ -452,6 +533,7 @@ const LoadingScreen = ({ onEnd }: LoadingScreenProps) => {
 
         if (ompVerificationComplete) {
           await updateInjectorIfNeeded();
+          await processWineOverlayVerification();
           finishLoading(isInitialLoad ? 1000 : 1);
         }
       } catch (error: any) {
@@ -470,6 +552,7 @@ const LoadingScreen = ({ onEnd }: LoadingScreenProps) => {
       downloadSAMPFiles,
       processOmpPluginVerification,
       updateInjectorIfNeeded,
+      processWineOverlayVerification,
       finishLoading,
     ]
   );
@@ -590,7 +673,8 @@ const LoadingScreen = ({ onEnd }: LoadingScreenProps) => {
         <View style={styles.spacer} />
         {(loadingStage === LoadingStage.DOWNLOADING_SAMP ||
           loadingStage === LoadingStage.DOWNLOADING_OMP ||
-          loadingStage === LoadingStage.UPDATING_INJECTOR) && (
+          loadingStage === LoadingStage.UPDATING_INJECTOR ||
+          loadingStage === LoadingStage.DOWNLOADING_WINE_OVERLAY) && (
           <>
             <Text
               semibold
@@ -600,8 +684,10 @@ const LoadingScreen = ({ onEnd }: LoadingScreenProps) => {
               {loadingStage === LoadingStage.DOWNLOADING_SAMP
                 ? "Downloading SAMP files:"
                 : loadingStage === LoadingStage.DOWNLOADING_OMP
-                ? "Downloading OMP plugin:"
-                : "Updating injector:"}
+                  ? "Downloading OMP plugin:"
+                  : loadingStage === LoadingStage.UPDATING_INJECTOR
+                    ? "Updating injector:"
+                    : "Downloading Wine overlay DLL:"}
             </Text>
             {progressBar}
           </>
