@@ -111,31 +111,119 @@ fn stage_windowed_mode(game_dir: &Path) -> Option<PathBuf> {
     Some(dll_path)
 }
 
+// The size of the main display in points - what Wine's desktop is (the bottle
+// isn't in Retina mode). None if it can't be read.
+#[cfg(target_os = "macos")]
+fn main_display_points() -> Option<(i32, i32)> {
+    #[repr(C)]
+    struct CGPoint { x: f64, y: f64 }
+    #[repr(C)]
+    struct CGSize { width: f64, height: f64 }
+    #[repr(C)]
+    struct CGRect { origin: CGPoint, size: CGSize }
+    #[link(name = "CoreGraphics", kind = "framework")]
+    extern "C" {
+        fn CGMainDisplayID() -> u32;
+        fn CGDisplayBounds(display: u32) -> CGRect;
+    }
+    let r = unsafe { CGDisplayBounds(CGMainDisplayID()) };
+    let _ = (r.origin.x, r.origin.y);
+    let (w, h) = (r.size.width as i32, r.size.height as i32);
+    if w >= 640 && h >= 480 { Some((w, h)) } else { None }
+}
+#[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+fn main_display_points() -> Option<(i32, i32)> { None }
+
 // The DLL writes its state (mode, position, size) back to windowedmode.ini on
 // exit. Keep that, but pin the bordered window mode (Alt+Enter changes only
-// last until the next launch) and move a window still at the old 640x480
-// default up to 1280x800, so the game doesn't render tiny and get upscaled.
+// last until the next launch), move a window still at the old 640x480 default
+// up to 1280x800 (so the game doesn't render tiny and get upscaled), and fit
+// the window to the screen it opens on: a size saved on a bigger external
+// monitor doesn't fit the Mac's own screen once the monitor's unplugged, and a
+// game window larger than the desktop crashes on start. A position that would
+// put it off the screen goes back to centred.
 #[cfg(not(target_os = "windows"))]
 fn pin_bordered_window(ini: &str) -> String {
+    fit_window(ini, main_display_points())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn fit_window(ini: &str, display: Option<(i32, i32)>) -> String {
     let value = |key: &str| -> Option<i32> {
         ini.lines()
             .find_map(|l| l.trim().strip_prefix(key)?.strip_prefix('='))
             .and_then(|v| v.split(|c: char| c == ';' || c.is_whitespace()).next())
             .and_then(|v| v.parse().ok())
     };
-    let bump = value("resolutionX").map_or(false, |x| x <= 640);
+    let (mut w, mut h) = (value("resolutionX").unwrap_or(1280), value("resolutionY").unwrap_or(800));
+    if w <= 640 { w = 1280; h = 800; }
+    let (mut x, mut y) = (value("positionX").unwrap_or(-1), value("positionY").unwrap_or(-1));
+    if let Some((dw, dh)) = display {
+        // Room for the borders, the title bar and the menu bar.
+        let (max_w, max_h) = (dw - 16, dh - 64);
+        if w > max_w || h > max_h {
+            let scale = f64::min(max_w as f64 / w as f64, max_h as f64 / h as f64);
+            w = ((w as f64 * scale) as i32) & !1;
+            h = ((h as f64 * scale) as i32) & !1;
+        }
+        if x != -1 && (x < 0 || x + w > dw) { x = -1; }
+        if y != -1 && (y < 0 || y + h > dh) { y = -1; }
+    }
+    let keep_comment = |line: &str, new: String| match line.find(';') {
+        Some(i) => format!("{}\t{}", new, line[i..].trim_end()),
+        None => new,
+    };
     ini.lines()
         .map(|line| {
             let key = line.trim().split('=').next().unwrap_or("").trim();
             match key {
                 "mode" => "mode=1\t\t\t; 1: window, 2: window borderless, 3: fullscreen".to_string(),
-                "resolutionX" if bump => "resolutionX=1280".to_string(),
-                "resolutionY" if bump => "resolutionY=800".to_string(),
+                "resolutionX" => keep_comment(line, format!("resolutionX={}", w)),
+                "resolutionY" => keep_comment(line, format!("resolutionY={}", h)),
+                "positionX" => keep_comment(line, format!("positionX={}", x)),
+                "positionY" => keep_comment(line, format!("positionY={}", y)),
                 _ => line.to_string(),
             }
         })
         .collect::<Vec<_>>()
         .join("\r\n")
+}
+
+#[cfg(all(test, not(target_os = "windows")))]
+mod fit_window_tests {
+    use super::fit_window;
+    const SAVED: &str = "[window]\r\nmode=2\r\nmaximized=0\r\npositionX=0\t; -1: centered\r\npositionY=24\t; -1: centered\r\nresolutionX=1672\r\nresolutionY=992\r\n";
+
+    #[test]
+    fn shrinks_a_window_saved_on_a_bigger_monitor() {
+        let out = fit_window(SAVED, Some((1440, 900)));
+        let num = |k: &str| -> i32 { out.lines().find_map(|l| l.strip_prefix(k)).unwrap().split(|c: char| !c.is_ascii_digit()).next().unwrap().parse().unwrap() };
+        let (w, h) = (num("resolutionX="), num("resolutionY="));
+        assert!(w <= 1424 && h <= 836 && w > 1300 && h > 780, "{}", out);
+        assert!(((w as f64 / h as f64) - 1672.0 / 992.0).abs() < 0.01, "{}", out);
+        assert!(out.contains("mode=1"));
+        assert!(out.contains("positionX=0\t; -1: centered"));
+    }
+
+    #[test]
+    fn leaves_a_window_that_fits() {
+        let out = fit_window(SAVED, Some((2560, 1440)));
+        assert!(out.contains("resolutionX=1672") && out.contains("resolutionY=992"), "{}", out);
+        assert!(out.contains("positionY=24"));
+    }
+
+    #[test]
+    fn recentres_a_window_left_on_another_screen() {
+        let ini = SAVED.replace("positionX=0", "positionX=1800");
+        let out = fit_window(&ini, Some((1440, 900)));
+        assert!(out.contains("positionX=-1"), "{}", out);
+    }
+
+    #[test]
+    fn bumps_the_old_640_default() {
+        let out = fit_window("resolutionX=640\r\nresolutionY=480\r\n", Some((1440, 900)));
+        assert!(out.contains("resolutionX=1280") && out.contains("resolutionY=800"), "{}", out);
+    }
 }
 
 // Debug-mode injection uses a vorbisFile.dll proxy instead of the external
