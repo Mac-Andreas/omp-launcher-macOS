@@ -549,8 +549,45 @@ export const startGame = async (
         // Settings → Advanced → Auto-retry after a crash.
         if (!useSettings.getState().autoRetry) return false;
         if (audioRetries >= MAX_AUDIO_RETRIES) return false;
-        // Drop any audio route we set for the dead attempt before the next try,
-        // so we don't leak the device switch / aggregate across retries.
+        audioRetries += 1;
+        Log.warn(
+          `[audio] game crashed early on connect; auto-retry ${audioRetries}/${MAX_AUDIO_RETRIES}`
+        );
+        useGameLaunch.getState().setRetry(audioRetries, MAX_AUDIO_RETRIES);
+        setLaunching(true);
+        // The crash being retried is CoreAudio's, under the built-in speakers.
+        // Retrying on the same route just crashes again, so keep the safe route
+        // a previous attempt set up (it's restored when the game quits or we
+        // give up), or put one in place now if the speakers are still the output.
+        const relaunch = async () => {
+          if (audioFix && routeToRestore == null) {
+            try {
+              const now = await invoke<{ builtIn: boolean; name: string | null }>("get_audio_output_info");
+              if (now && now.builtIn) {
+                const route = await invoke<{
+                  previousUid: string | null;
+                  routedTo: string;
+                  createdAggregate: boolean;
+                }>("apply_audio_route_fix");
+                routeToRestore = {
+                  previousUid: route.previousUid,
+                  createdAggregate: route.createdAggregate,
+                };
+                Log.info(`[audio_fix] retry ${audioRetries}: audio routed to ${route.routedTo} before relaunching`);
+              }
+            } catch (e) {
+              Log.warn("[audio_fix] route fix before retry failed:", e);
+            }
+          }
+          doLaunch();
+        };
+        // Small breather so the OS reaps the dead process and releases the DLLs
+        // (run_samp also kills stale game processes on entry).
+        setTimeout(relaunch, 1200);
+        return true;
+      };
+      // Put the user's audio back (the game's gone and we aren't retrying).
+      const restoreRoute = () => {
         if (routeToRestore != null) {
           invoke("restore_audio_route", {
             previousUid: routeToRestore.previousUid,
@@ -558,16 +595,6 @@ export const startGame = async (
           }).catch(() => {});
           routeToRestore = null;
         }
-        audioRetries += 1;
-        Log.warn(
-          `[audio] game crashed early on connect; auto-retry ${audioRetries}/${MAX_AUDIO_RETRIES}`
-        );
-        useGameLaunch.getState().setRetry(audioRetries, MAX_AUDIO_RETRIES);
-        setLaunching(true);
-        // Small breather so the OS reaps the dead process and releases the DLLs
-        // (run_samp also kills stale game processes on entry).
-        setTimeout(() => doLaunch(), 1200);
-        return true;
       };
 
       const tick = async () => {
@@ -641,6 +668,7 @@ export const startGame = async (
           // Never came up within the window — also the audio abort (it can kill
           // the game before is_game_running ever sees it). Retry, else give up.
           if (retryAudioCrash()) return;
+          restoreRoute();
           setLaunching(false);
           showOkModal(
             t("game_failed_to_start_title"),

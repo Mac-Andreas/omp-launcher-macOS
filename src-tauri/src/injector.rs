@@ -377,6 +377,43 @@ fn finalize_session_log(mut child: std::process::Child, log_path: PathBuf) {
     });
 }
 
+// One launch at a time, and a Cancel that sticks. A launch spends ~20 s in
+// setup (registry fixes through wine) before the game starts, and the frontend
+// can ask for another in that window - a retry, or Cancel then Play again.
+// Two games in one bottle collide: the second finds GTA's "already running"
+// event and quits, or crashes (0x746929, IsAlreadyRunning) if the first has no
+// window yet. So launches queue behind LAUNCH_LOCK, Cancel bumps LAUNCH_GEN,
+// and right before the game starts a launch checks it's still wanted and
+// clears any game that came up in the meantime.
+#[cfg(not(target_os = "windows"))]
+static LAUNCH_LOCK: once_cell::sync::Lazy<tokio::sync::Mutex<()>> =
+    once_cell::sync::Lazy::new(|| tokio::sync::Mutex::new(()));
+#[cfg(not(target_os = "windows"))]
+static LAUNCH_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// The launch overlay's Cancel: any launch still in setup stops before it
+/// starts the game.
+#[cfg(not(target_os = "windows"))]
+pub fn cancel_launches() {
+    LAUNCH_GEN.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+}
+#[cfg(target_os = "windows")]
+pub fn cancel_launches() {}
+
+#[cfg(not(target_os = "windows"))]
+fn launch_still_wanted(gen: u64) -> Result<()> {
+    if LAUNCH_GEN.load(std::sync::atomic::Ordering::SeqCst) != gen {
+        info!("[run_samp] cancelled before the game started");
+        return Err(LauncherError::Process("Launch cancelled".to_string()));
+    }
+    let killed = crate::helpers::kill_game_processes();
+    if killed > 0 {
+        info!("[run_samp] killed {} game process(es) that started during setup", killed);
+        std::thread::sleep(std::time::Duration::from_millis(1200));
+    }
+    Ok(())
+}
+
 #[cfg(not(target_os = "windows"))]
 pub async fn run_samp(
     name: &str,
@@ -395,6 +432,8 @@ pub async fn run_samp(
     text_fix: bool,
     windowed_mode: bool,
 ) -> Result<()> {
+    let _one_launch = LAUNCH_LOCK.lock().await;
+    let launch_gen = LAUNCH_GEN.load(std::sync::atomic::Ordering::SeqCst);
     let game_dir = PathBuf::from(executable_dir);
     let wine_channels = if detailed {
         DETAILED_WINE_CHANNELS
@@ -697,6 +736,7 @@ pub async fn run_samp(
             }),
             ("game_dir".into(), game_dir.display().to_string()),
         ];
+        launch_still_wanted(launch_gen)?;
         let log_path = start_session_log(&game_dir, &header);
 
         let mut cmd = Command::new(cxstart);
@@ -753,6 +793,7 @@ pub async fn run_samp(
         }
     }
 
+    launch_still_wanted(launch_gen)?;
     let mut cmd = Command::new(cxstart);
     cmd.arg("--bottle")
         .arg(&bottle)

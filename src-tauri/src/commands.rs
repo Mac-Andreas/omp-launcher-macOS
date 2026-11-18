@@ -162,6 +162,7 @@ pub fn is_process_alive(pid: u32) -> bool {
 /// button and to enforce a single game at a time. Returns how many.
 #[tauri::command]
 pub fn kill_game() -> u32 {
+    crate::injector::cancel_launches();
     helpers::kill_game_processes()
 }
 
