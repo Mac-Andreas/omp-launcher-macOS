@@ -8,6 +8,7 @@ import {
   View,
 } from "react-native";
 import Icon from "../../../components/Icon";
+import IOSSwitch from "../../../components/IOSSwitch";
 import Text from "../../../components/Text";
 import { IN_GAME } from "../../../constants/app";
 import { images } from "../../../constants/images";
@@ -78,8 +79,15 @@ const ActionCard = ({
 
 const Advanced = () => {
   const { theme } = useTheme();
-  const { customGameExe, setCustomGameExe, bottleName, setGTASAPath, setNickName } =
-    useSettings();
+  const {
+    customGameExe,
+    setCustomGameExe,
+    bottleName,
+    setGTASAPath,
+    setNickName,
+    autoRetry,
+    setAutoRetry,
+  } = useSettings();
 
   const importNicknameAndPath = async () => {
     try {
@@ -212,6 +220,22 @@ const Advanced = () => {
         />
       </View>
 
+      <View
+        style={[styles.divider, { backgroundColor: `${theme.textPrimary}14` }]}
+      />
+      <View style={styles.toggleHead}>
+        <Text semibold size={2} color={theme.textPrimary} style={{ flex: 1 }} numberOfLines={1}>
+          {t("settings_auto_retry_label", { defaultValue: "Auto-retry after a crash" })}
+        </Text>
+        <IOSSwitch value={autoRetry} onChange={setAutoRetry} />
+      </View>
+      <Text size={1} color={`${theme.textPrimary}88`} style={styles.sectionSub} numberOfLines={0}>
+        {t("settings_auto_retry_help", {
+          defaultValue:
+            "If the game crashes while it's opening, the launcher opens it again (up to 3 times) and shows \"Auto-retrying to open the game after a crash\". Off: you're told it failed instead.",
+        })}
+      </Text>
+
       {!IN_GAME && (
         <>
           <View
@@ -261,6 +285,11 @@ const styles = StyleSheet.create({
   },
   sectionSub: {
     lineHeight: sc(16),
+  },
+  toggleHead: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: sc(12),
   },
   input: {
     height: sc(38),

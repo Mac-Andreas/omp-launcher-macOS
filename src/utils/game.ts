@@ -480,6 +480,8 @@ export const startGame = async (
   // giving up. Only meaningful on macOS; harmless elsewhere (the game rarely
   // dies this fast on a successful join).
   const MAX_AUDIO_RETRIES = 3;
+  // A fresh launch: no retry shown yet.
+  useGameLaunch.getState().setRetry(0, MAX_AUDIO_RETRIES);
   // A game that dies sooner than this after coming up (or never comes up) is
   // treated as the early audio/connect crash rather than a real play session.
   const EARLY_CRASH_MS = 20_000;
@@ -544,6 +546,8 @@ export const startGame = async (
       // a retry was started (so the caller stops handling this attempt), false
       // if the retry budget is spent.
       const retryAudioCrash = (): boolean => {
+        // Settings → Advanced → Auto-retry after a crash.
+        if (!useSettings.getState().autoRetry) return false;
         if (audioRetries >= MAX_AUDIO_RETRIES) return false;
         // Drop any audio route we set for the dead attempt before the next try,
         // so we don't leak the device switch / aggregate across retries.
@@ -558,6 +562,7 @@ export const startGame = async (
         Log.warn(
           `[audio] game crashed early on connect; auto-retry ${audioRetries}/${MAX_AUDIO_RETRIES}`
         );
+        useGameLaunch.getState().setRetry(audioRetries, MAX_AUDIO_RETRIES);
         setLaunching(true);
         // Small breather so the OS reaps the dead process and releases the DLLs
         // (run_samp also kills stale game processes on entry).
@@ -604,6 +609,17 @@ export const startGame = async (
               // Auto-retry instead of treating it as a real (short) session.
               if (elapsed < EARLY_CRASH_MS && retryAudioCrash()) {
                 return;
+              }
+              if (elapsed < EARLY_CRASH_MS) {
+                // Auto-retry is off, or its three tries are spent: say so.
+                showOkModal(
+                  t("game_crashed_on_start_title", { defaultValue: "The game closed while opening" }),
+                  t("game_crashed_on_start_description", {
+                    defaultValue: useSettings.getState().autoRetry
+                      ? "It crashed on each of 3 automatic retries. Try again, or turn on Debug logging (Settings → Beta) and send the log."
+                      : "It crashed while starting. Auto-retry after a crash is off (Settings → Advanced).",
+                  })
+                );
               }
               const timeOnServer = Math.round(elapsed / 1000);
               telemetryGameLeave(`${server.ip}:${server.port}`, timeOnServer);

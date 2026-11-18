@@ -25,7 +25,7 @@ const PAUSED_COLOR = "#E8A317";
 const CANCEL_COLOR = "#C24B43";
 
 const LaunchOverlay = () => {
-  const { launching, paused, gateOpen, setLaunching, setPaused } =
+  const { launching, paused, gateOpen, setLaunching, setPaused, retryAttempt, retryMax } =
     useGameLaunch();
   const { theme } = useTheme();
   const anim = useRef(new Animated.Value(0)).current;
@@ -95,6 +95,17 @@ const LaunchOverlay = () => {
               })
             : t("launching_game")}
         </Text>
+        {!paused && retryAttempt > 0 && (
+          // Settings → Advanced → Auto-retry after a crash.
+          <Text size={1} color={PAUSED_COLOR}>
+            {t("launching_game_auto_retry", {
+              defaultValue:
+                "Auto-retrying to open the game after a crash (attempt {{attempt}} of {{max}})",
+              attempt: retryAttempt,
+              max: retryMax,
+            })}
+          </Text>
+        )}
         <View
           style={[
             styles.track,

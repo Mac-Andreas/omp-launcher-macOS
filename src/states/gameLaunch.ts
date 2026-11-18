@@ -19,6 +19,12 @@ interface GameLaunchState {
   // UI show "Installing…" instead of a stale "installed" state.
   sampInstalling: boolean;
   setSampInstalling: (value: boolean) => void;
+  // Auto-retry after a crash: which attempt this is (0 = the first launch, no
+  // retry yet) and how many retries there are in all. The launch overlay shows
+  // "Auto-retrying to open the game after a crash" while it's above 0.
+  retryAttempt: number;
+  retryMax: number;
+  setRetry: (attempt: number, max: number) => void;
 }
 
 export const useGameLaunch = create<GameLaunchState>((set) => ({
@@ -30,4 +36,7 @@ export const useGameLaunch = create<GameLaunchState>((set) => ({
   setGateOpen: (value) => set({ gateOpen: value }),
   sampInstalling: false,
   setSampInstalling: (value) => set({ sampInstalling: value }),
+  retryAttempt: 0,
+  retryMax: 0,
+  setRetry: (attempt, max) => set({ retryAttempt: attempt, retryMax: max }),
 }));

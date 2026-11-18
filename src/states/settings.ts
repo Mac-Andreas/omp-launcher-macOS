@@ -42,6 +42,11 @@ interface SettingsPersistentState {
   // game skips the exclusive-fullscreen D3D mode-set that is unstable under
   // CrossOver. On by default.
   windowedMode: boolean;
+  // Auto-retry after a crash (Settings → Advanced): when the game dies while
+  // it's starting - on macOS that's usually CrossOver's intermittent CoreAudio
+  // abort - open it again, up to three times, saying so on the launch screen.
+  // On by default; off shows the failure instead.
+  autoRetry: boolean;
   // Anonymous usage telemetry. Opt-out: on by default, no startup prompt. Only
   // a once-per-day aggregated summary is sent (counts + time averages), never
   // anything identifying — just a random per-install id. Users can turn it off
@@ -65,6 +70,7 @@ interface SettingsPersistentState {
   setRenderFix: (enabled: boolean) => void;
   setTextFix: (enabled: boolean) => void;
   setWindowedMode: (enabled: boolean) => void;
+  setAutoRetry: (enabled: boolean) => void;
   setTelemetryEnabled: (enabled: boolean) => void;
   setTelemetryConsentVersion: (version: string) => void;
 }
@@ -89,6 +95,7 @@ const useSettings = create<SettingsPersistentState>()(
       renderFix: true,
       textFix: true,
       windowedMode: true,
+      autoRetry: true,
       telemetryEnabled: true,
       telemetryConsentVersion: "",
       recentNicknames: [],
@@ -121,6 +128,7 @@ const useSettings = create<SettingsPersistentState>()(
       setRenderFix: (enabled) => set({ renderFix: enabled }),
       setTextFix: (enabled) => set({ textFix: enabled }),
       setWindowedMode: (enabled) => set({ windowedMode: enabled }),
+      setAutoRetry: (enabled) => set({ autoRetry: enabled }),
       setTelemetryEnabled: (enabled) => set({ telemetryEnabled: enabled }),
       setTelemetryConsentVersion: (version) =>
         set({ telemetryConsentVersion: version }),
