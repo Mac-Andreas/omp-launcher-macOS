@@ -111,6 +111,94 @@ fn stage_windowed_mode(game_dir: &Path) -> Option<PathBuf> {
     Some(dll_path)
 }
 
+// GTA SA keeps the video mode it last used in gta_sa.set as an index into the
+// current screen's mode list (RenderWare: windowed, then each 32-bit and 16-bit
+// mode). Plug in a bigger monitor and the list grows; pick a mode there and the
+// index points past the end of the list once you're back on the Mac's screen
+// (38 against the MacBook's 37). GTA 1.0 doesn't check it: psSelectDevice reads
+// past its own list, RenderWare refuses the mode, rsRWINITIALIZE fails, and the
+// game destroys its window and quits a few seconds after starting. In windowed
+// mode the window size comes from windowedmode.ini, so the saved mode only
+// picks the first device: reset it to 0, GTA's "none chosen", and it falls back
+// to 800x600x32, which every screen has. Called before each windowed launch.
+#[cfg(not(target_os = "windows"))]
+const GTA_SET_VERSION: u32 = 6;
+// The version, the controls (4 controller types x 59 actions x 12 bytes), then
+// the menu settings up to m_nDisplayVideoMode (gta-reversed, CMenuManager::LoadSettings).
+#[cfg(not(target_os = "windows"))]
+const GTA_SET_VIDEO_MODE_OFFSET: usize = 4 + 4 * 59 * 12 + 34;
+
+#[cfg(not(target_os = "windows"))]
+fn reset_saved_video_mode(game_dir: &Path) {
+    let Some(drive_c) = game_dir
+        .ancestors()
+        .find(|p| p.file_name().map_or(false, |n| n == "drive_c"))
+    else {
+        return;
+    };
+    let Ok(users) = std::fs::read_dir(drive_c.join("users")) else { return };
+    for user in users.flatten() {
+        let set = user.path().join("Documents/GTA San Andreas User Files/gta_sa.set");
+        let Ok(mut data) = std::fs::read(&set) else { continue };
+        match reset_video_mode_bytes(&mut data) {
+            Some(old) => match std::fs::write(&set, &data) {
+                Ok(()) => info!("[run_samp] gta_sa.set: saved video mode {} reset to 0 (GTA picks a safe default)", old),
+                Err(e) => log::warn!("[run_samp] couldn't rewrite {}: {}", set.display(), e),
+            },
+            None => {}
+        }
+    }
+}
+
+// Some(old index) if it was changed; None if it was already 0 or this isn't a
+// gta_sa.set laid out the way GTA SA 1.0 writes it (then it's left alone).
+#[cfg(not(target_os = "windows"))]
+fn reset_video_mode_bytes(data: &mut [u8]) -> Option<i32> {
+    let off = GTA_SET_VIDEO_MODE_OFFSET;
+    if data.len() < off + 4 {
+        return None;
+    }
+    let word = |at: usize| u32::from_le_bytes([data[at], data[at + 1], data[at + 2], data[at + 3]]);
+    // Version 6, and the controls section starts with action ids 0, 1, 2.
+    if word(0) != GTA_SET_VERSION || word(4) != 0 || word(16) != 1 || word(28) != 2 {
+        return None;
+    }
+    let old = word(off) as i32;
+    if old == 0 {
+        return None;
+    }
+    data[off..off + 4].copy_from_slice(&0i32.to_le_bytes());
+    Some(old)
+}
+
+#[cfg(all(test, not(target_os = "windows")))]
+mod video_mode_tests {
+    use super::{reset_video_mode_bytes, GTA_SET_VIDEO_MODE_OFFSET};
+    fn sample(mode: i32) -> Vec<u8> {
+        let mut d = vec![0u8; 2900];
+        d[0..4].copy_from_slice(&6u32.to_le_bytes());
+        for a in 0..59u32 { let at = 4 + a as usize * 12; d[at..at + 4].copy_from_slice(&a.to_le_bytes()); }
+        d[GTA_SET_VIDEO_MODE_OFFSET..GTA_SET_VIDEO_MODE_OFFSET + 4].copy_from_slice(&mode.to_le_bytes());
+        d
+    }
+    #[test]
+    fn resets_a_mode_from_another_screen() {
+        let mut d = sample(38);
+        assert_eq!(reset_video_mode_bytes(&mut d), Some(38));
+        assert_eq!(&d[GTA_SET_VIDEO_MODE_OFFSET..GTA_SET_VIDEO_MODE_OFFSET + 4], &[0, 0, 0, 0]);
+    }
+    #[test]
+    fn leaves_zero_and_foreign_files_alone() {
+        let mut d = sample(0);
+        assert_eq!(reset_video_mode_bytes(&mut d), None);
+        let mut bad = sample(38);
+        bad[0..4].copy_from_slice(&5u32.to_le_bytes());
+        assert_eq!(reset_video_mode_bytes(&mut bad), None);
+        let mut short = vec![0u8; 100];
+        assert_eq!(reset_video_mode_bytes(&mut short), None);
+    }
+}
+
 // The size, in points (what Wine's desktop is: the bottle isn't in Retina
 // mode), that a window must fit to be safe on every connected display: the
 // smallest width and height among them. With an external monitor plugged in
@@ -715,6 +803,12 @@ pub async fn run_samp(
     let exe_win = to_win_path(&exe_path).ok_or_else(|| {
         LauncherError::NotFound("game exe is outside the bottle drive_c".to_string())
     })?;
+
+    // A video mode saved on a monitor that's gone stops GTA on start (see
+    // reset_saved_video_mode). Both launch paths, while windowed mode is on.
+    if windowed_mode {
+        reset_saved_video_mode(&game_dir);
+    }
 
     // --- Debug: launch the game directly; the vorbis proxy injects samp.dll +
     // omp-client.dll. cxstart's --cx-log redirects the wine process stderr (the
