@@ -111,8 +111,13 @@ fn stage_windowed_mode(game_dir: &Path) -> Option<PathBuf> {
     Some(dll_path)
 }
 
-// The size of the main display in points - what Wine's desktop is (the bottle
-// isn't in Retina mode). None if it can't be read.
+// The size, in points (what Wine's desktop is: the bottle isn't in Retina
+// mode), that a window must fit to be safe on every connected display: the
+// smallest width and height among them. With an external monitor plugged in
+// that's usually the Mac's own screen - so a window sized for it survives the
+// monitor being unplugged mid-game (macOS moves the window to the remaining
+// screen, and a game window larger than the desktop crashes). None if the
+// displays can't be read.
 #[cfg(target_os = "macos")]
 fn main_display_points() -> Option<(i32, i32)> {
     #[repr(C)]
@@ -125,11 +130,24 @@ fn main_display_points() -> Option<(i32, i32)> {
     extern "C" {
         fn CGMainDisplayID() -> u32;
         fn CGDisplayBounds(display: u32) -> CGRect;
+        fn CGGetActiveDisplayList(max: u32, displays: *mut u32, count: *mut u32) -> i32;
     }
-    let r = unsafe { CGDisplayBounds(CGMainDisplayID()) };
-    let _ = (r.origin.x, r.origin.y);
-    let (w, h) = (r.size.width as i32, r.size.height as i32);
-    if w >= 640 && h >= 480 { Some((w, h)) } else { None }
+    let mut ids = [0u32; 16];
+    let mut count = 0u32;
+    let listed = unsafe { CGGetActiveDisplayList(ids.len() as u32, ids.as_mut_ptr(), &mut count) } == 0 && count > 0;
+    if !listed {
+        ids[0] = unsafe { CGMainDisplayID() };
+        count = 1;
+    }
+    let mut fit: Option<(i32, i32)> = None;
+    for &id in &ids[..count as usize] {
+        let r = unsafe { CGDisplayBounds(id) };
+        let _ = (r.origin.x, r.origin.y);
+        let (w, h) = (r.size.width as i32, r.size.height as i32);
+        if w < 640 || h < 480 { continue; }
+        fit = Some(match fit { Some((fw, fh)) => (fw.min(w), fh.min(h)), None => (w, h) });
+    }
+    fit
 }
 #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
 fn main_display_points() -> Option<(i32, i32)> { None }
