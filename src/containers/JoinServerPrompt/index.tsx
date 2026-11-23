@@ -43,14 +43,15 @@ const JoinServerPrompt = () => {
   const { height, width } = useWindowDimensions();
   const { theme, themeType } = useTheme();
   const [password, setPassword] = useState("");
-  const [perServerVersion, setPerServerVersion] = useState<
-    SAMPDLLVersions | undefined
-  >();
+  const [detectedVersion, setDetectedVersion] = useState<{
+    key: string;
+    version: SAMPDLLVersions;
+  }>();
+  const versionRequest = useRef(0);
   const [perServerNickname, setPerServerNickname] = useState("");
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const { nickName, gtasaPath, sampVersion, setSampVersion, recentNicknames } =
-    useSettings();
+  const { nickName, gtasaPath, recentNicknames } = useSettings();
 
   const settings = useMemo(() => {
     if (server) {
@@ -59,25 +60,41 @@ const JoinServerPrompt = () => {
     return undefined;
   }, [server, perServerSettings]);
 
+  const versionKey = server ? `${server.ip}:${server.port}:${gtasaPath}` : "";
+  const selectedVersion =
+    settings?.sampVersion ??
+    (detectedVersion?.key === versionKey ? detectedVersion.version : undefined);
+
   useEffect(() => {
-    if (!settings?.sampVersion) {
-      if (visible) {
-        setInitialSampVersion();
+    const request = ++versionRequest.current;
+    setDetectedVersion(undefined);
+    if (!visible || !server || settings?.sampVersion) return;
+
+    const detectVersion = async () => {
+      const version = await getInitialSampVersion();
+      if (versionRequest.current === request) {
+        setDetectedVersion({ key: versionKey, version });
       }
-    } else {
-      if (perServerVersion) {
-        setSampVersion(perServerVersion);
-      }
-    }
-  }, [visible, perServerVersion, settings?.sampVersion]);
+    };
+    detectVersion();
+
+    return () => {
+      versionRequest.current++;
+    };
+  }, [
+    visible,
+    versionKey,
+    server?.version,
+    server?.rules?.artwork,
+    server?.rules?.allowed_clients,
+    settings?.sampVersion,
+  ]);
 
   useEffect(() => {
     if (settings) {
       setPerServerNickname(settings.nickname || "");
-      setPerServerVersion(settings.sampVersion);
     } else {
       setPerServerNickname("");
-      setPerServerVersion(undefined);
     }
   }, [visible, server?.ip, server?.port]);
 
@@ -153,30 +170,23 @@ const JoinServerPrompt = () => {
     [height, width, HEIGHT, WIDTH, theme, bigView, perServerNickname.length]
   );
 
-  const setInitialSampVersion = useCallback(async () => {
-    if (await fs.exists(`${gtasaPath}/samp.dll`)) {
-      setPerServerVersion("custom");
-    } else if (
-      (server && server.version.includes("0.3.7")) ||
-      (server && server.rules["artwork"] == undefined)
-    ) {
-      setPerServerVersion("037R5_samp.dll");
-    } else if (
-      server &&
-      server.rules["artwork"] &&
-      server.rules["artwork"] === "Yes"
-    ) {
-      setPerServerVersion("03DL_samp.dll");
-    } else if (
-      server &&
-      server.rules["allowed_clients"] &&
-      server.rules["allowed_clients"].includes("0.3.DL")
-    ) {
-      setPerServerVersion("03DL_samp.dll");
-    } else {
-      setPerServerVersion("037R5_samp.dll");
+  const getInitialSampVersion = async (): Promise<SAMPDLLVersions> => {
+    try {
+      if (await fs.exists(`${gtasaPath}/samp.dll`)) return "custom";
+    } catch (error) {
+      console.error("Could not check for samp.dll:", error);
     }
-  }, [gtasaPath, server]);
+
+    if (server?.version.includes("0.3.7")) {
+      return "037R5_samp.dll";
+    } else if (server?.rules["artwork"] === "Yes") {
+      return "03DL_samp.dll";
+    } else if (server?.rules["allowed_clients"]?.includes("0.3.DL")) {
+      return "03DL_samp.dll";
+    } else {
+      return "037R5_samp.dll";
+    }
+  };
 
   const handleNicknameChange = useCallback(
     (text: string) => {
@@ -220,7 +230,7 @@ const JoinServerPrompt = () => {
   );
 
   const handleConnect = useCallback(() => {
-    if (server) {
+    if (server && selectedVersion) {
       if (server.hasPassword && password.length) {
         const srvCpy = { ...server };
         srvCpy.password = password;
@@ -234,7 +244,8 @@ const JoinServerPrompt = () => {
         server,
         perServerNickname.length ? perServerNickname : nickName,
         gtasaPath,
-        server.hasPassword ? password : ""
+        server.hasPassword ? password : "",
+        selectedVersion
       );
       showPrompt(false);
     }
@@ -244,6 +255,7 @@ const JoinServerPrompt = () => {
     perServerNickname,
     nickName,
     gtasaPath,
+    selectedVersion,
     updateServer,
     updateInFavoritesList,
     updateInRecentlyJoinedList,
@@ -259,10 +271,11 @@ const JoinServerPrompt = () => {
         } else {
           setServerSettings(server, perServerNickname || undefined, version);
         }
-        setPerServerVersion(version);
+        versionRequest.current++;
+        setDetectedVersion({ key: versionKey, version });
       }
     },
-    [server, settings, perServerNickname, setServerSettings]
+    [server, settings, perServerNickname, setServerSettings, versionKey]
   );
 
   if (!visible) {
@@ -398,6 +411,7 @@ const JoinServerPrompt = () => {
           <TouchableOpacity
             style={[styles.connectButton, dynamicStyles.connectButton]}
             onPress={handleConnect}
+            disabled={!selectedVersion}
           >
             <Text semibold color={"#FFFFFF"} size={2}>
               {t("connect")}
@@ -409,9 +423,7 @@ const JoinServerPrompt = () => {
             </Text>
             <DropdownList
               style={[styles.versionDropdown, dynamicStyles.versionDropdown]}
-              value={getSampVersionName(
-                perServerVersion ? perServerVersion : sampVersion
-              )}
+              value={selectedVersion && getSampVersionName(selectedVersion)}
               items={getSampVersions().map((version) =>
                 getSampVersionName(version)
               )}

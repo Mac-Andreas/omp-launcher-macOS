@@ -18,7 +18,7 @@ import { fetchServers, getIpAddress } from "../utils/helpers";
 import { Log } from "./logger";
 import { PING_TIMEOUT_VALUE } from "./query";
 import { sc } from "./sizeScaler";
-import { Server } from "./types";
+import { SAMPDLLVersions, Server } from "./types";
 
 const showOkModal = (title: string, description: string) => {
   const { showMessageBox, hideMessageBox } = useMessageBox.getState();
@@ -64,12 +64,18 @@ export const startGame = async (
   server: Server,
   nickname: string,
   gtasaPath: string,
-  password: string
+  password: string,
+  versionOverride?: SAMPDLLVersions
 ) => {
   const { addToRecentlyJoined } = usePersistentServers.getState();
   const { showMessageBox, hideMessageBox } = useMessageBox.getState();
   const { show: showSettings } = useSettingsModal.getState();
-  const { sampVersion, customGameExe } = useSettings.getState();
+  const { sampVersion: defaultSampVersion, customGameExe } =
+    useSettings.getState();
+  const sampVersion =
+    versionOverride ??
+    usePersistentServers.getState().getServerSettings(server)?.sampVersion ??
+    defaultSampVersion;
   const { showPrompt, setServer } = useJoinServerPrompt.getState();
   const { setSelected } = useServers.getState();
 
