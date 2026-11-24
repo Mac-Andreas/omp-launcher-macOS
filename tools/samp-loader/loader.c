@@ -67,6 +67,12 @@ static DWORD WINAPI LoadClients(LPVOID reserved)
      * (injector.rs run_samp: samp.dll, then omp_file). If omp-client.dll is
      * missing or disabled, SA-MP still loads normally.
      */
+    /*
+     * Windowed mode (Settings -> Beta), if the launcher placed it: first, so its
+     * hooks are in before the clients run and before GTA creates its D3D device
+     * (the same order as the injector's). Without the file this does nothing.
+     */
+    LoadLibraryA("windowedmode.dll");
     LoadLibraryA("samp.dll");
     Sleep(1500);
     LoadLibraryA("omp-client.dll");

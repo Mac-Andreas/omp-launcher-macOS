@@ -644,7 +644,14 @@ pub async fn run_samp(
     // left-over proxy can't double-inject with the external injector.
     if debug {
         stage_vorbis_proxy(&game_dir)?;
-        // The proxy loads omp-crowd.dll itself after the clients (when it's been placed).
+        // The proxy loads windowedmode.dll first (when it's been placed: Beta -> Windowed
+        // mode) and omp-crowd.dll after the clients. Without the windowed DLL here, GTA
+        // came up full screen at its fallback mode (the saved one is reset for windowed).
+        if windowed_mode {
+            let _ = stage_windowed_mode(&game_dir);
+        } else {
+            let _ = std::fs::remove_file(game_dir.join("windowedmode.dll"));
+        }
         let _ = stage_crowd(&game_dir);
     } else {
         restore_vorbis_proxy(&game_dir);
