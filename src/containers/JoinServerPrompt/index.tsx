@@ -71,38 +71,59 @@ const JoinServerPrompt = () => {
   const { height, width } = useWindowDimensions();
   const { theme, themeType } = useTheme();
   const [password, setPassword] = useState("");
-  const [perServerVersion, setPerServerVersion] = useState<
-    SAMPDLLVersions | undefined
-  >();
+  const [detectedVersion, setDetectedVersion] = useState<{
+    key: string;
+    version: SAMPDLLVersions;
+  }>();
+  const versionRequest = useRef(0);
   const [perServerNickname, setPerServerNickname] = useState("");
   const [copied, setCopied] = useState(false);
   const [dropdownOpen, setDropdownOpen] = useState(false);
 
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const { nickName, gtasaPath, sampVersion, setSampVersion, recentNicknames } =
-    useSettings();
+  const { nickName, gtasaPath, recentNicknames } = useSettings();
 
   const settings = useMemo(() => {
     if (server) return getServerSettings(server);
     return undefined;
   }, [server, perServerSettings]);
 
+  const versionKey = server ? `${server.ip}:${server.port}:${gtasaPath}` : "";
+  const selectedVersion =
+    settings?.sampVersion ??
+    (detectedVersion?.key === versionKey ? detectedVersion.version : undefined);
+
   useEffect(() => {
-    if (!settings?.sampVersion) {
-      if (visible) setInitialSampVersion();
-    } else if (perServerVersion) {
-      setSampVersion(perServerVersion);
-    }
-  }, [visible, perServerVersion, settings?.sampVersion]);
+    const request = ++versionRequest.current;
+    setDetectedVersion(undefined);
+    if (!visible || !server || settings?.sampVersion) return;
+
+    const detectVersion = async () => {
+      const version = await getInitialSampVersion();
+      if (versionRequest.current === request) {
+        setDetectedVersion({ key: versionKey, version });
+      }
+    };
+    detectVersion();
+
+    return () => {
+      versionRequest.current++;
+    };
+  }, [
+    visible,
+    versionKey,
+    server?.version,
+    server?.rules?.artwork,
+    server?.rules?.allowed_clients,
+    settings?.sampVersion,
+  ]);
 
   useEffect(() => {
     if (settings) {
       setPerServerNickname(settings.nickname || "");
-      setPerServerVersion(settings.sampVersion);
     } else {
       setPerServerNickname("");
-      setPerServerVersion(undefined);
     }
   }, [visible, server?.ip, server?.port]);
 
@@ -207,30 +228,23 @@ const JoinServerPrompt = () => {
     [height, width, cardHeight, theme, perServerNickname.length, copied]
   );
 
-  const setInitialSampVersion = useCallback(async () => {
-    if (await fs.exists(`${gtasaPath}/samp.dll`)) {
-      setPerServerVersion("custom");
-    } else if (
-      (server && server.version.includes("0.3.7")) ||
-      (server && server.rules["artwork"] == undefined)
-    ) {
-      setPerServerVersion("037R5_samp.dll");
-    } else if (
-      server &&
-      server.rules["artwork"] &&
-      server.rules["artwork"] === "Yes"
-    ) {
-      setPerServerVersion("03DL_samp.dll");
-    } else if (
-      server &&
-      server.rules["allowed_clients"] &&
-      server.rules["allowed_clients"].includes("0.3.DL")
-    ) {
-      setPerServerVersion("03DL_samp.dll");
-    } else {
-      setPerServerVersion("037R5_samp.dll");
+  const getInitialSampVersion = async (): Promise<SAMPDLLVersions> => {
+    try {
+      if (await fs.exists(`${gtasaPath}/samp.dll`)) return "custom";
+    } catch (error) {
+      console.error("Could not check for samp.dll:", error);
     }
-  }, [gtasaPath, server]);
+
+    if (server?.version.includes("0.3.7")) {
+      return "037R5_samp.dll";
+    } else if (server?.rules["artwork"] === "Yes") {
+      return "03DL_samp.dll";
+    } else if (server?.rules["allowed_clients"]?.includes("0.3.DL")) {
+      return "03DL_samp.dll";
+    } else {
+      return "037R5_samp.dll";
+    }
+  };
 
   const handleNicknameChange = useCallback(
     (text: string) => {
@@ -281,44 +295,41 @@ const JoinServerPrompt = () => {
   );
 
   const handleConnect = useCallback(() => {
-    if (!server) return;
-    if (server.hasPassword && password.length) {
-      const srvCpy = { ...server, password };
-      updateServer(srvCpy);
-      updateInFavoritesList(srvCpy);
-      updateInRecentlyJoinedList(srvCpy);
+    if (server && selectedVersion) {
+      if (server.hasPassword && password.length) {
+        const srvCpy = { ...server, password };
+        updateServer(srvCpy);
+        updateInFavoritesList(srvCpy);
+        updateInRecentlyJoinedList(srvCpy);
+      }
+
+      // The version picked for this server (or detected) goes straight to startGame.
+      startGame(
+        server,
+        perServerNickname.length ? perServerNickname : nickName,
+        gtasaPath,
+        server.hasPassword ? password : "",
+        selectedVersion
+      );
+      showPrompt(false);
     }
-
-    // The dropdown drives perServerVersion, but startGame reads the global
-    // sampVersion (default "custom"). Without this the chosen version never
-    // reaches startGame, so a machine with no samp.dll in the game folder
-    // (typical on macOS) loops on the "Can't find SA-MP" modal.
-    const effectiveVersion = perServerVersion ? perServerVersion : sampVersion;
-    setSampVersion(effectiveVersion);
-
-    startGame(
-      server,
-      perServerNickname.length ? perServerNickname : nickName,
-      gtasaPath,
-      server.hasPassword ? password : ""
-    );
-    showPrompt(false);
   }, [
     server,
     password,
     perServerNickname,
     nickName,
     gtasaPath,
-    perServerVersion,
-    sampVersion,
-    setSampVersion,
+    selectedVersion,
     updateServer,
     updateInFavoritesList,
     updateInRecentlyJoinedList,
     showPrompt,
   ]);
 
-  if (!visible) return null;
+
+  if (!visible) {
+    return null;
+  }
 
   return (
     <StaticModal onDismiss={() => showPrompt(false)}>
@@ -756,6 +767,7 @@ const JoinServerPrompt = () => {
         <TouchableOpacity
           style={styles.connectButton}
           onPress={handleConnect}
+          disabled={!selectedVersion}
         >
           <Icon
             svg
