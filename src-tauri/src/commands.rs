@@ -23,7 +23,9 @@ pub async fn inject(
     render_fix: bool,
     text_fix: bool,
     windowed_mode: bool,
+    local_crowd: Option<bool>,
 ) -> std::result::Result<(), String> {
+    injector::LOCAL_CROWD.store(local_crowd.unwrap_or(false), std::sync::atomic::Ordering::SeqCst);
     let actual_omp_file = if *crate::NO_OMP_FLAG.lock().unwrap() {
         ""
     } else {

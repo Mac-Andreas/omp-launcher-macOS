@@ -81,6 +81,8 @@ const Beta = () => {
     setTextFix,
     windowedMode,
     setWindowedMode,
+    localCrowd,
+    setLocalCrowd,
   } = useSettings();
 
   const revealLogs = () => {
@@ -220,6 +222,22 @@ const Beta = () => {
         })}
         value={windowedMode}
         onChange={setWindowedMode}
+      />
+
+      <View
+        style={[styles.divider, { backgroundColor: `${theme.textPrimary}14` }]}
+      />
+
+      <ToggleRow
+        label={t("settings_local_crowd_label", {
+          defaultValue: "Local crowd",
+        })}
+        help={t("settings_local_crowd_help", {
+          defaultValue:
+            "GTA's own pedestrians and traffic, on servers that allow it (their info says crowd: yes). Experimental: if the game crashes, turn it off.",
+        })}
+        value={localCrowd}
+        onChange={setLocalCrowd}
       />
     </ScrollView>
   );

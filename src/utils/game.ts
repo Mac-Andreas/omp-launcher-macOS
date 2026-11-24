@@ -460,6 +460,12 @@ export const startGame = async (
     textFix,
     windowedMode,
   } = useSettings.getState();
+  // The Local crowd runs only where the server allows it: its query rules say "crowd: yes"
+  // (the omp-crowd relay component, switched on by the server's scripts).
+  // ...and only if the player hasn't switched it off (Settings → Beta → Local crowd).
+  const localCrowd =
+    useSettings.getState().localCrowd &&
+    String(server.rules?.crowd ?? "").trim().toLowerCase() === "yes";
 
   // The audio route we applied for this launch (default-device switch and/or
   // our aggregate device), so we can undo it when the game exits. null = we
@@ -510,6 +516,7 @@ export const startGame = async (
       renderFix,
       textFix,
       windowedMode,
+      localCrowd,
     })
       .then(() => {
       // The server stays selected in the list after launching.

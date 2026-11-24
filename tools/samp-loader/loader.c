@@ -70,6 +70,12 @@ static DWORD WINAPI LoadClients(LPVOID reserved)
     LoadLibraryA("samp.dll");
     Sleep(1500);
     LoadLibraryA("omp-client.dll");
+    /*
+     * The Local crowd (Settings -> Beta), if the launcher placed it: without
+     * its omp-crowd.ini it does nothing.
+     */
+    Sleep(500);
+    LoadLibraryA("omp-crowd.dll");
 
     return 0;
 }

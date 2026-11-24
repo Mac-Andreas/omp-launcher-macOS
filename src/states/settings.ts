@@ -42,6 +42,9 @@ interface SettingsPersistentState {
   // game skips the exclusive-fullscreen D3D mode-set that is unstable under
   // CrossOver. On by default.
   windowedMode: boolean;
+  // Settings → Beta → Local crowd: GTA's own pedestrians and traffic (omp-crowd.dll) on servers
+  // that allow it (their info says "crowd: yes"). The player's own switch; on by default.
+  localCrowd: boolean;
   // Auto-retry after a crash (Settings → Advanced): when the game dies while
   // it's starting - on macOS that's usually CrossOver's intermittent CoreAudio
   // abort - open it again, up to three times, saying so on the launch screen.
@@ -70,6 +73,7 @@ interface SettingsPersistentState {
   setRenderFix: (enabled: boolean) => void;
   setTextFix: (enabled: boolean) => void;
   setWindowedMode: (enabled: boolean) => void;
+  setLocalCrowd: (enabled: boolean) => void;
   setAutoRetry: (enabled: boolean) => void;
   setTelemetryEnabled: (enabled: boolean) => void;
   setTelemetryConsentVersion: (version: string) => void;
@@ -95,6 +99,7 @@ const useSettings = create<SettingsPersistentState>()(
       renderFix: true,
       textFix: true,
       windowedMode: true,
+      localCrowd: true,
       autoRetry: true,
       telemetryEnabled: true,
       telemetryConsentVersion: "",
@@ -128,6 +133,7 @@ const useSettings = create<SettingsPersistentState>()(
       setRenderFix: (enabled) => set({ renderFix: enabled }),
       setTextFix: (enabled) => set({ textFix: enabled }),
       setWindowedMode: (enabled) => set({ windowedMode: enabled }),
+      setLocalCrowd: (enabled) => set({ localCrowd: enabled }),
       setAutoRetry: (enabled) => set({ autoRetry: enabled }),
       setTelemetryEnabled: (enabled) => set({ telemetryEnabled: enabled }),
       setTelemetryConsentVersion: (version) =>

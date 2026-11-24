@@ -86,6 +86,37 @@ fn stage_injector(game_dir: &Path, downloaded: Option<&Path>) -> Result<PathBuf>
 }
 
 // Windowed mode (Beta → Windowed mode, on by default): ThirteenAG's
+// The Local crowd (omp-crowd.dll): GTA's own pedestrians and traffic back on, as GTA Online
+// does it - only where the server allows it (its query rules say "crowd: yes"). Then the DLL
+// is placed with omp-crowd.ini and loaded after the clients; the server's relay decides the
+// rest. Otherwise the .ini is removed, and without it the DLL does nothing.
+const CROWD_DLL: &[u8] = include_bytes!("../../tools/omp-crowd/omp-crowd.dll");
+const CROWD_INI: &str = "[world]\r\nenabled=1\r\ndiag=1\r\npeds=1\r\nped_density=0.6\r\nmax_peds=20\r\n";
+
+// Set by the inject command for each launch, from the server's "crowd" rule.
+pub static LOCAL_CROWD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn stage_crowd(game_dir: &std::path::Path) -> Option<std::path::PathBuf> {
+    let ini = game_dir.join("omp-crowd.ini");
+    if !LOCAL_CROWD.load(std::sync::atomic::Ordering::SeqCst) {
+        let _ = std::fs::remove_file(&ini);
+        return None;
+    }
+    let dll = game_dir.join("omp-crowd.dll");
+    if let Err(e) = std::fs::write(&dll, CROWD_DLL) {
+        log::warn!("[run_samp] failed to stage omp-crowd.dll: {}", e);
+        return None;
+    }
+    // The player's own settings stay; a fresh one gets the defaults.
+    if !ini.exists() {
+        if let Err(e) = std::fs::write(&ini, CROWD_INI) {
+            log::warn!("[run_samp] failed to stage omp-crowd.ini: {}", e);
+        }
+    }
+    info!("[run_samp] staged omp-crowd (Local crowd on)");
+    Some(dll)
+}
+
 // WindowedMode packaged as a plain DLL (github.com/Mac-Andreas/omp-windowedmode).
 // GTA SA's true fullscreen does an exclusive D3D mode-set that is unstable under
 // CrossOver; the DLL keeps the device windowed, here as a normal bordered
@@ -613,6 +644,8 @@ pub async fn run_samp(
     // left-over proxy can't double-inject with the external injector.
     if debug {
         stage_vorbis_proxy(&game_dir)?;
+        // The proxy loads omp-crowd.dll itself after the clients (when it's been placed).
+        let _ = stage_crowd(&game_dir);
     } else {
         restore_vorbis_proxy(&game_dir);
     }
@@ -886,6 +919,10 @@ pub async fn run_samp(
             dll_args.push(omp_win);
         }
     }
+    // Last: the Local crowd, when it's switched on.
+    if let Some(crowd_win) = stage_crowd(&game_dir).and_then(|p| to_win_path(&p)) {
+        dll_args.push(crowd_win);
+    }
 
     launch_still_wanted(launch_gen)?;
     let mut cmd = Command::new(cxstart);
@@ -965,10 +1002,17 @@ pub async fn run_samp(
             inject_dll(p.id(), dll_path, 0, false)?;
             info!("[run_samp] omp_file.is_empty(): {}", omp_file.is_empty());
             if !omp_file.is_empty() {
-                inject_dll(p.id(), omp_file, 0, false)
-            } else {
-                Ok(())
+                inject_dll(p.id(), omp_file, 0, false)?;
             }
+            // The Local crowd, when it's switched on (a failure doesn't stop the game).
+            if let Some(crowd) = stage_crowd(std::path::Path::new(executable_dir)) {
+                if let Some(crowd) = crowd.to_str() {
+                    if let Err(e) = inject_dll(p.id(), crowd, 0, false) {
+                        info!("[run_samp] omp-crowd.dll not injected: {:?}", e);
+                    }
+                }
+            }
+            Ok(())
         }
         Err(e) => {
             info!("[injector.rs] Process creation failed: {}", e);
